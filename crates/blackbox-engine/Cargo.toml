@@ -1,0 +1,20 @@
+[package]
+name = "blackbox-engine"
+description = "Blackbox recorder engine: wires Windows collectors to the analysis core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+blackbox-core.workspace = true
+blackbox-sys.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+log.workspace = true
+
+[[example]]
+name = "probe"
+
+[lints]
+workspace = true

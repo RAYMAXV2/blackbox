@@ -1,0 +1,40 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/blackbox-core",
+    "crates/blackbox-sys",
+    "crates/blackbox-engine",
+    "src-tauri",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+license = "MIT"
+
+[workspace.dependencies]
+blackbox-core = { path = "crates/blackbox-core" }
+blackbox-sys = { path = "crates/blackbox-sys" }
+blackbox-engine = { path = "crates/blackbox-engine" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+log = "0.4"
+windows-sys = "0.61"
+
+[workspace.lints.rust]
+unsafe_op_in_unsafe_fn = "warn"
+missing_debug_implementations = "allow"
+
+[workspace.lints.clippy]
+undocumented_unsafe_blocks = "allow"
+needless_return = "warn"
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+strip = "symbols"
+
+[profile.dev.package."*"]
+opt-level = 1

@@ -1,0 +1,389 @@
+[
+  {
+    "id": "drv.network",
+    "category": "driver",
+    "consequences": ["stutter", "audio_crackle", "input_lag"],
+    "title": { "en": "Network driver {driver} blocked the CPU", "fr": "Le pilote réseau {driver} a bloqué le processeur" },
+    "explain": {
+      "en": "A network adapter driver ran a deferred procedure call (DPC) for {us} µs. While it runs, nothing else can use that CPU core: frames, audio and input all wait.",
+      "fr": "Le pilote de la carte réseau a exécuté un appel différé (DPC) pendant {us} µs. Pendant ce temps, rien d'autre ne peut utiliser ce cœur : images, son et entrées attendent."
+    },
+    "fixes": [
+      { "en": "Install the network driver from the chip maker (Intel, Realtek, Killer…), not the one from Windows Update.", "fr": "Installe le pilote réseau du fabricant de la puce (Intel, Realtek, Killer…), pas celui de Windows Update." },
+      { "en": "Device Manager → your adapter → Advanced: turn off power saving (Energy-Efficient Ethernet, Green Ethernet).", "fr": "Gestionnaire de périphériques → ta carte → Avancé : désactive les économies d'énergie (Energy-Efficient Ethernet, Green Ethernet)." },
+      { "en": "On Wi-Fi, try a cable: Wi-Fi drivers are a classic source of latency spikes.", "fr": "En Wi-Fi, essaie en filaire : les pilotes Wi-Fi sont une source classique de pics de latence." }
+    ]
+  },
+  {
+    "id": "drv.gpu",
+    "category": "driver",
+    "consequences": ["stutter", "audio_crackle", "input_lag"],
+    "title": { "en": "Graphics driver {driver} blocked the CPU", "fr": "Le pilote graphique {driver} a bloqué le processeur" },
+    "explain": {
+      "en": "The graphics driver spent {us} µs in a single DPC or interrupt. GPU driver calls that long usually point to a driver bug or a broken install.",
+      "fr": "Le pilote graphique a passé {us} µs dans un seul DPC ou une seule interruption. Des appels aussi longs viennent en général d'un bug du pilote ou d'une installation abîmée."
+    },
+    "fixes": [
+      { "en": "Do a clean install of the latest driver.", "fr": "Fais une installation propre du dernier pilote." },
+      { "en": "If it started after a driver update, roll back to the previous version.", "fr": "Si le problème est apparu après une mise à jour du pilote, reviens à la version précédente." },
+      { "en": "Close utilities that talk to the GPU constantly (overlays, RGB and monitoring tools).", "fr": "Ferme les utilitaires qui interrogent le GPU en permanence (overlays, outils RGB et de monitoring)." }
+    ]
+  },
+  {
+    "id": "drv.storage",
+    "category": "driver",
+    "consequences": ["stutter", "freeze", "audio_crackle"],
+    "title": { "en": "Storage driver {driver} blocked the CPU", "fr": "Le pilote de stockage {driver} a bloqué le processeur" },
+    "explain": {
+      "en": "The disk controller driver ran for {us} µs without letting anything else use the core.",
+      "fr": "Le pilote du contrôleur de disque a tourné {us} µs sans laisser le cœur à personne d'autre."
+    },
+    "fixes": [
+      { "en": "Update your chipset and storage drivers (AMD chipset / Intel RST) from the manufacturer.", "fr": "Mets à jour les pilotes chipset et stockage (chipset AMD / Intel RST) depuis le site du fabricant." },
+      { "en": "Update your SSD firmware with the maker's tool.", "fr": "Mets à jour le firmware de ton SSD avec l'outil du fabricant." },
+      { "en": "Check the SSD health (SMART) and temperature.", "fr": "Vérifie la santé (SMART) et la température du SSD." }
+    ]
+  },
+  {
+    "id": "drv.acpi",
+    "category": "driver",
+    "consequences": ["stutter", "audio_crackle", "input_lag"],
+    "title": { "en": "Power management (ACPI) blocked the CPU", "fr": "La gestion d'énergie (ACPI) a bloqué le processeur" },
+    "explain": {
+      "en": "ACPI.sys handles power, battery and the embedded controller. It ran for {us} µs: typical on laptops polling the battery, fans or sensors.",
+      "fr": "ACPI.sys gère l'énergie, la batterie et le contrôleur embarqué. Il a tourné {us} µs : typique des portables qui interrogent la batterie, les ventilateurs ou les capteurs."
+    },
+    "fixes": [
+      { "en": "Update your BIOS/UEFI.", "fr": "Mets à jour ton BIOS/UEFI." },
+      { "en": "Close tools that poll fan or battery sensors very often.", "fr": "Ferme les outils qui interrogent très souvent les capteurs de ventilateurs ou de batterie." },
+      { "en": "Laptop: in Device Manager, disable then re-enable \"Microsoft ACPI-Compliant Control Method Battery\".", "fr": "Portable : dans le Gestionnaire de périphériques, désactive puis réactive « Batterie à méthode de contrôle compatible ACPI Microsoft »." }
+    ]
+  },
+  {
+    "id": "drv.usb",
+    "category": "driver",
+    "consequences": ["stutter", "audio_crackle", "input_lag"],
+    "title": { "en": "USB driver {driver} blocked the CPU", "fr": "Le pilote USB {driver} a bloqué le processeur" },
+    "explain": {
+      "en": "A USB controller or device driver ran for {us} µs. A misbehaving device (dongle, hub, RGB controller) is often behind it.",
+      "fr": "Un pilote de contrôleur ou de périphérique USB a tourné {us} µs. Un périphérique capricieux (dongle, hub, contrôleur RGB) est souvent en cause."
+    },
+    "fixes": [
+      { "en": "Unplug USB devices one at a time to find the culprit.", "fr": "Débranche les périphériques USB un par un pour trouver le coupable." },
+      { "en": "Plug high polling-rate mice and wireless dongles straight into a rear motherboard port.", "fr": "Branche les souris à haute fréquence et les dongles sans fil directement sur un port arrière de la carte mère." },
+      { "en": "Update your chipset drivers.", "fr": "Mets à jour les pilotes du chipset." }
+    ]
+  },
+  {
+    "id": "drv.audio",
+    "category": "driver",
+    "consequences": ["audio_crackle", "stutter"],
+    "title": { "en": "Audio driver {driver} blocked the CPU", "fr": "Le pilote audio {driver} a bloqué le processeur" },
+    "explain": {
+      "en": "The audio stack ran for {us} µs in a single call.",
+      "fr": "La chaîne audio a tourné {us} µs en un seul appel."
+    },
+    "fixes": [
+      { "en": "Install the audio driver from your motherboard or headset maker.", "fr": "Installe le pilote audio du fabricant de ta carte mère ou de ton casque." },
+      { "en": "Turn off audio enhancements and disable unused outputs (e.g. monitor HDMI audio).", "fr": "Désactive les améliorations audio et les sorties inutilisées (par ex. le son HDMI de l'écran)." }
+    ]
+  },
+  {
+    "id": "drv.other",
+    "category": "driver",
+    "consequences": ["stutter", "audio_crackle", "input_lag"],
+    "title": { "en": "Driver {driver} blocked the CPU", "fr": "Le pilote {driver} a bloqué le processeur" },
+    "explain": {
+      "en": "A kernel driver ran for {us} µs without letting anything else use the core.",
+      "fr": "Un pilote noyau a tourné {us} µs sans laisser le cœur à personne d'autre."
+    },
+    "fixes": [
+      { "en": "Look up the driver file name to find which device or software installed it.", "fr": "Cherche le nom du fichier pilote pour savoir quel périphérique ou logiciel l'a installé." },
+      { "en": "Update or uninstall that software or device.", "fr": "Mets à jour ou désinstalle ce logiciel ou ce périphérique." }
+    ]
+  },
+  {
+    "id": "io.background_disk",
+    "category": "disk",
+    "consequences": ["stutter", "freeze", "slow_app"],
+    "title": { "en": "{process} saturated your disk", "fr": "{process} a saturé ton disque" },
+    "explain": {
+      "en": "While your app was waiting for data, {process} moved {mb} MB and disk latency climbed to {latMs} ms.",
+      "fr": "Pendant que ton appli attendait des données, {process} a fait transiter {mb} Mo et la latence du disque est montée à {latMs} ms."
+    },
+    "fixes": [
+      { "en": "If it's a background task, reschedule or disable it.", "fr": "Si c'est une tâche de fond, reprogramme-la ou désactive-la." },
+      { "en": "Keep games on a different SSD than Windows and your downloads.", "fr": "Mets tes jeux sur un SSD différent de celui de Windows et des téléchargements." },
+      { "en": "Pause downloads and updates while you play.", "fr": "Mets en pause les téléchargements et mises à jour pendant que tu joues." }
+    ]
+  },
+  {
+    "id": "io.game_streaming",
+    "category": "disk",
+    "consequences": ["stutter"],
+    "title": { "en": "{app} was waiting on the disk", "fr": "{app} attendait le disque" },
+    "explain": {
+      "en": "The game itself was loading {mb} MB while disk latency reached {latMs} ms: a classic asset-streaming hitch.",
+      "fr": "Le jeu lui-même chargeait {mb} Mo pendant que la latence du disque atteignait {latMs} ms : une saccade classique de chargement de ressources."
+    },
+    "fixes": [
+      { "en": "Install the game on an NVMe SSD.", "fr": "Installe le jeu sur un SSD NVMe." },
+      { "en": "Keep at least 15% free space on that SSD.", "fr": "Garde au moins 15 % d'espace libre sur ce SSD." },
+      { "en": "Check the SSD health and that it isn't overheating.", "fr": "Vérifie la santé du SSD et qu'il ne surchauffe pas." }
+    ]
+  },
+  {
+    "id": "mem.paging",
+    "category": "memory",
+    "consequences": ["stutter", "freeze", "slow_app"],
+    "title": { "en": "Not enough free memory: Windows paged to disk", "fr": "Pas assez de mémoire libre : Windows a utilisé le fichier d'échange" },
+    "explain": {
+      "en": "{count} hard page faults just before the hitch: data had to come back from the page file on disk. Only {mb} MB of RAM was available.",
+      "fr": "{count} défauts de page durs juste avant la saccade : des données ont dû être relues depuis le fichier d'échange. Il ne restait que {mb} Mo de RAM disponible."
+    },
+    "fixes": [
+      { "en": "Close memory-hungry background apps (browsers, launchers, chat apps).", "fr": "Ferme les applis gourmandes en mémoire en arrière-plan (navigateurs, launchers, messageries)." },
+      { "en": "Lower texture quality in the game.", "fr": "Baisse la qualité des textures dans le jeu." },
+      { "en": "If it happens often, your workload needs more RAM.", "fr": "Si ça arrive souvent, ton usage demande plus de RAM." }
+    ]
+  },
+  {
+    "id": "proc.defender",
+    "category": "process",
+    "consequences": ["stutter", "freeze", "slow_app"],
+    "title": { "en": "Microsoft Defender was scanning", "fr": "Microsoft Defender faisait une analyse" },
+    "explain": {
+      "en": "Microsoft Defender ({process}) was scanning around the hitch, using CPU and disk at the same time as your app.",
+      "fr": "Microsoft Defender ({process}) faisait une analyse autour de la saccade et utilisait le CPU et le disque en même temps que ton appli."
+    },
+    "fixes": [
+      { "en": "Schedule full scans for when you're not playing.", "fr": "Programme les analyses complètes quand tu ne joues pas." },
+      { "en": "For a game you trust, add its install folder as an exclusion (Windows Security → Virus & threat protection → Exclusions).", "fr": "Pour un jeu de confiance, ajoute son dossier en exclusion (Sécurité Windows → Protection contre les virus → Exclusions)." }
+    ]
+  },
+  {
+    "id": "proc.windows_update",
+    "category": "process",
+    "consequences": ["stutter", "fps_drop", "slow_app"],
+    "title": { "en": "Windows Update was working in the background", "fr": "Windows Update travaillait en arrière-plan" },
+    "explain": {
+      "en": "{process} (Windows servicing) was active around the hitch, using CPU and disk.",
+      "fr": "{process} (maintenance de Windows) était actif autour de la saccade et utilisait CPU et disque."
+    },
+    "fixes": [
+      { "en": "Let updates finish, then reboot.", "fr": "Laisse les mises à jour se terminer, puis redémarre." },
+      { "en": "Set your active hours so Windows doesn't install updates while you play.", "fr": "Règle tes heures d'activité pour que Windows n'installe rien pendant que tu joues." }
+    ]
+  },
+  {
+    "id": "proc.telemetry",
+    "category": "process",
+    "consequences": ["stutter", "fps_drop"],
+    "title": { "en": "A Windows telemetry task ran ({process})", "fr": "Une tâche de télémétrie Windows s'est lancée ({process})" },
+    "explain": {
+      "en": "{process} scans installed programs and hardware, and is known to hit the CPU and disk hard. It was active around the hitch.",
+      "fr": "{process} inventorie les programmes et le matériel installés, et il est connu pour charger fortement le CPU et le disque. Il était actif autour de la saccade."
+    },
+    "fixes": [
+      { "en": "Task Scheduler → Microsoft → Windows → Application Experience: disable \"Microsoft Compatibility Appraiser\".", "fr": "Planificateur de tâches → Microsoft → Windows → Application Experience : désactive « Microsoft Compatibility Appraiser »." },
+      { "en": "Settings → Privacy → Diagnostics: send only required diagnostic data.", "fr": "Paramètres → Confidentialité → Diagnostics : n'envoie que les données obligatoires." }
+    ]
+  },
+  {
+    "id": "proc.search_indexer",
+    "category": "process",
+    "consequences": ["stutter", "slow_app"],
+    "title": { "en": "Windows Search was indexing files", "fr": "Windows Search indexait des fichiers" },
+    "explain": {
+      "en": "The search indexer ({process}) was reading files when the hitch happened.",
+      "fr": "L'indexeur de recherche ({process}) lisait des fichiers au moment de la saccade."
+    },
+    "fixes": [
+      { "en": "Exclude game and download folders from indexing (Settings → Privacy → Searching Windows).", "fr": "Exclus les dossiers de jeux et de téléchargements de l'indexation (Paramètres → Confidentialité → Recherche dans Windows)." },
+      { "en": "Let the first full indexing finish once; it calms down afterwards.", "fr": "Laisse la première indexation complète se terminer : ça se calme ensuite." }
+    ]
+  },
+  {
+    "id": "proc.shader_precache",
+    "category": "process",
+    "consequences": ["stutter", "fps_drop"],
+    "title": { "en": "Steam was compiling shaders in the background", "fr": "Steam compilait des shaders en arrière-plan" },
+    "explain": {
+      "en": "{process} (Steam shader pre-caching) was compiling shaders in the background while you were playing.",
+      "fr": "{process} (pré-cache des shaders de Steam) compilait des shaders en arrière-plan pendant que tu jouais."
+    },
+    "fixes": [
+      { "en": "Let shader pre-caching finish before you play.", "fr": "Laisse le pré-cache des shaders se terminer avant de jouer." },
+      { "en": "Or turn off \"Allow background processing of Vulkan shaders\" in Steam's Shader Pre-Caching settings.", "fr": "Ou désactive « Autoriser le traitement en arrière-plan des shaders Vulkan » dans les réglages Pré-cache des shaders de Steam." }
+    ]
+  },
+  {
+    "id": "proc.cloud_sync",
+    "category": "process",
+    "consequences": ["stutter", "slow_app"],
+    "title": { "en": "{process} was syncing files", "fr": "{process} synchronisait des fichiers" },
+    "explain": {
+      "en": "A cloud sync client was reading and uploading files around the hitch.",
+      "fr": "Un client de synchronisation cloud lisait et envoyait des fichiers autour de la saccade."
+    },
+    "fixes": [
+      { "en": "Pause sync while you play.", "fr": "Mets la synchro en pause pendant que tu joues." },
+      { "en": "Don't sync folders that change constantly (game installs, caches).", "fr": "Ne synchronise pas les dossiers qui changent sans arrêt (installations de jeux, caches)." }
+    ]
+  },
+  {
+    "id": "proc.wmi",
+    "category": "process",
+    "consequences": ["stutter", "audio_crackle"],
+    "title": { "en": "A program was hammering WMI", "fr": "Un programme surchargeait WMI" },
+    "explain": {
+      "en": "WMI Provider Host ({process}) was busy around the hitch. That's almost always a monitoring, RGB or vendor utility polling sensors too often.",
+      "fr": "L'hôte WMI ({process}) était très sollicité autour de la saccade. C'est presque toujours un utilitaire de monitoring, RGB ou constructeur qui interroge les capteurs trop souvent."
+    },
+    "fixes": [
+      { "en": "Find the polling app (RGB, monitoring or vendor suite) and lower its refresh rate or close it.", "fr": "Trouve l'appli qui interroge (RGB, monitoring, suite constructeur) et baisse sa fréquence ou ferme-la." },
+      { "en": "Avoid running several hardware-monitoring tools at the same time.", "fr": "Évite de lancer plusieurs outils de monitoring matériel en même temps." }
+    ]
+  },
+  {
+    "id": "proc.scheduled_task",
+    "category": "process",
+    "consequences": ["stutter", "fps_drop"],
+    "title": { "en": "A scheduled task started: {process}", "fr": "Une tâche planifiée s'est lancée : {process}" },
+    "explain": {
+      "en": "{process} was launched by the Task Scheduler {sec} s before the hitch.",
+      "fr": "{process} a été lancé par le Planificateur de tâches {sec} s avant la saccade."
+    },
+    "fixes": [
+      { "en": "Open Task Scheduler, find the task that runs {process}, and disable or reschedule it if you don't need it.", "fr": "Ouvre le Planificateur de tâches, trouve la tâche qui lance {process}, et désactive-la ou reprogramme-la si tu n'en as pas besoin." }
+    ]
+  },
+  {
+    "id": "proc.background_cpu",
+    "category": "process",
+    "consequences": ["stutter", "fps_drop"],
+    "title": { "en": "{process} used a lot of CPU in the background", "fr": "{process} a beaucoup utilisé le CPU en arrière-plan" },
+    "explain": {
+      "en": "{process} used {pct}% of the CPU while your app was rendering.",
+      "fr": "{process} a utilisé {pct} % du CPU pendant que ton appli affichait des images."
+    },
+    "fixes": [
+      { "en": "Close or pause it while you play.", "fr": "Ferme-le ou mets-le en pause pendant que tu joues." },
+      { "en": "Check its settings for background activity (updates, scans, sync).", "fr": "Regarde ses réglages d'activité en arrière-plan (mises à jour, analyses, synchro)." }
+    ]
+  },
+  {
+    "id": "proc.new_process",
+    "category": "process",
+    "consequences": ["stutter"],
+    "title": { "en": "{process} started just before the hitch", "fr": "{process} a démarré juste avant la saccade" },
+    "explain": {
+      "en": "Starting a program costs CPU and disk time; {process} started {sec} s before.",
+      "fr": "Lancer un programme coûte du CPU et du disque ; {process} a démarré {sec} s avant."
+    },
+    "fixes": [
+      { "en": "If it's an updater or helper you don't need, disable it in Task Manager → Startup apps.", "fr": "Si c'est un programme de mise à jour ou un assistant inutile, désactive-le dans Gestionnaire des tâches → Applications de démarrage." }
+    ]
+  },
+  {
+    "id": "cpu.saturated",
+    "category": "cpu",
+    "consequences": ["stutter", "fps_drop", "input_lag"],
+    "title": { "en": "Your CPU was maxed out", "fr": "Ton processeur était au maximum" },
+    "explain": {
+      "en": "Total CPU usage reached {pct}% around the hitch: the game couldn't get the CPU time it needed.",
+      "fr": "L'utilisation totale du CPU a atteint {pct} % autour de la saccade : le jeu n'a pas eu le temps de calcul dont il avait besoin."
+    },
+    "fixes": [
+      { "en": "Close background apps.", "fr": "Ferme les applis en arrière-plan." },
+      { "en": "Cap your frame rate slightly below your average to leave headroom.", "fr": "Limite tes FPS un peu en dessous de ta moyenne pour garder de la marge." },
+      { "en": "Lower CPU-heavy settings (view distance, crowds, physics).", "fr": "Baisse les réglages gourmands en CPU (distance d'affichage, foules, physique)." }
+    ]
+  },
+  {
+    "id": "cpu.throttled",
+    "category": "cpu",
+    "consequences": ["fps_drop", "stutter"],
+    "title": { "en": "Your CPU was slowed down", "fr": "Ton processeur a été ralenti" },
+    "explain": {
+      "en": "Windows reported the processor frequency capped at {pct}% of its maximum: a thermal or power limit kicked in.",
+      "fr": "Windows a signalé une fréquence processeur limitée à {pct} % de son maximum : une limite thermique ou de puissance s'est déclenchée."
+    },
+    "fixes": [
+      { "en": "Check CPU temperatures and the cooler mounting / thermal paste.", "fr": "Vérifie les températures du CPU et le montage du ventirad / la pâte thermique." },
+      { "en": "Use the Balanced or High performance power plan, not Power saver.", "fr": "Utilise le mode d'alimentation Équilibré ou Performances élevées, pas Économie d'énergie." },
+      { "en": "On a laptop, plug in the charger.", "fr": "Sur un portable, branche le chargeur." }
+    ]
+  },
+  {
+    "id": "gpu.power_limit",
+    "category": "gpu",
+    "consequences": ["fps_drop", "stutter"],
+    "title": { "en": "Your GPU hit its power limit", "fr": "Ta carte graphique a atteint sa limite de puissance" },
+    "explain": {
+      "en": "The GPU lowered its clocks because it reached its power limit ({reason}). Normal at full load, but sudden drops can show up as stutter.",
+      "fr": "Le GPU a baissé ses fréquences car il a atteint sa limite de puissance ({reason}). Normal à pleine charge, mais les chutes brutales peuvent se voir en saccades."
+    },
+    "fixes": [
+      { "en": "Cap your FPS or enable V-Sync/G-Sync to keep the load steady.", "fr": "Limite tes FPS ou active la V-Sync/G-Sync pour garder une charge stable." },
+      { "en": "Check the power cables: separate PCIe cables, 12V-2x6 connector fully seated.", "fr": "Vérifie l'alimentation : câbles PCIe séparés, connecteur 12V-2x6 bien enfoncé." }
+    ]
+  },
+  {
+    "id": "gpu.thermal",
+    "category": "gpu",
+    "consequences": ["fps_drop", "stutter"],
+    "title": { "en": "Your GPU was thermal throttling", "fr": "Ta carte graphique bridait à cause de la chaleur" },
+    "explain": {
+      "en": "The GPU slowed itself down to stay safe at {c} °C.",
+      "fr": "Le GPU s'est ralenti pour se protéger à {c} °C."
+    },
+    "fixes": [
+      { "en": "Improve case airflow and clean the dust filters.", "fr": "Améliore le flux d'air du boîtier et nettoie les filtres à poussière." },
+      { "en": "Use a more aggressive GPU fan curve.", "fr": "Utilise une courbe de ventilation GPU plus agressive." }
+    ]
+  },
+  {
+    "id": "gpu.vram_full",
+    "category": "gpu",
+    "consequences": ["stutter", "fps_drop"],
+    "title": { "en": "Video memory was full", "fr": "La mémoire vidéo était pleine" },
+    "explain": {
+      "en": "{usedMb} of {totalMb} MB of VRAM were in use: textures had to be shuffled through system RAM.",
+      "fr": "{usedMb} sur {totalMb} Mo de VRAM étaient utilisés : les textures ont dû transiter par la RAM système."
+    },
+    "fixes": [
+      { "en": "Lower texture quality or resolution.", "fr": "Baisse la qualité des textures ou la résolution." },
+      { "en": "Close other apps using the GPU (browsers with hardware acceleration, video players).", "fr": "Ferme les autres applis qui utilisent le GPU (navigateurs avec accélération matérielle, lecteurs vidéo)." }
+    ]
+  },
+  {
+    "id": "app.not_responding",
+    "category": "app",
+    "consequences": ["freeze", "slow_app"],
+    "title": { "en": "{app} stopped responding", "fr": "{app} ne répondait plus" },
+    "explain": {
+      "en": "The app's window didn't process input for {sec} s. Usually a long task on its main thread, or waiting on disk or network.",
+      "fr": "La fenêtre de l'appli n'a pas traité les entrées pendant {sec} s. En général une tâche longue sur son thread principal, ou une attente disque ou réseau."
+    },
+    "fixes": [
+      { "en": "Look at the evidence: if the disk or CPU was saturated, fix that first.", "fr": "Regarde les indices : si le disque ou le CPU était saturé, règle ça d'abord." },
+      { "en": "Update the app; if it keeps happening, report it to its developer.", "fr": "Mets l'appli à jour ; si ça continue, signale-le à son développeur." }
+    ]
+  },
+  {
+    "id": "game.internal",
+    "category": "app",
+    "consequences": ["stutter"],
+    "title": { "en": "Likely inside {app} itself", "fr": "Probablement dans {app} lui-même" },
+    "explain": {
+      "en": "No outside cause found: drivers, disk, CPU, memory and GPU all looked normal. This usually comes from the game itself: shader compilation, asset loading or its own CPU spikes.",
+      "fr": "Aucune cause extérieure trouvée : pilotes, disque, CPU, mémoire et GPU étaient normaux. Ça vient en général du jeu lui-même : compilation de shaders, chargement de ressources ou ses propres pics CPU."
+    },
+    "fixes": [
+      { "en": "Shader-compilation stutter usually fades after playing the same area again.", "fr": "Les saccades de compilation de shaders disparaissent en général en rejouant la même zone." },
+      { "en": "Check for game patches and the newest GPU driver.", "fr": "Vérifie les correctifs du jeu et le dernier pilote graphique." },
+      { "en": "If the game offers several APIs (DX11, DX12, Vulkan), try another one.", "fr": "Si le jeu propose plusieurs API (DX11, DX12, Vulkan), essaie-en une autre." }
+    ]
+  }
+]
