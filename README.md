@@ -143,6 +143,10 @@ that the three stay in sync.
 - Shareable incident reports, community signatures, comparisons between similar PCs
 - Boot and shutdown analysis
 
+## License
+
+[MIT](LICENSE).
+
 ## En français
 
 Blackbox est une boîte noire pour les performances de Windows : il enregistre en continu, pour
