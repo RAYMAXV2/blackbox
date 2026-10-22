@@ -624,6 +624,82 @@ pub struct Bootstrap {
     pub kb: Vec<KnowledgeEntry>,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CauseCount {
+    pub id: String,
+    pub count: u32,
+}
+
+/// One play session, or the average of several (`sessions > 1`). See contract.ts.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct SessionStats {
+    pub id: String,
+    pub game: String,
+    pub sessions: u32,
+    pub start_ts: i64,
+    pub end_ts: i64,
+    pub duration_sec: u64,
+    pub full_tracing: bool,
+
+    pub frames: u64,
+    pub fps_avg: f32,
+    pub fps_min1s: f32,
+    pub fps_max1s: f32,
+    pub frame_time_avg_ms: f32,
+    pub frame_time_p50_ms: f32,
+    pub frame_time_p95_ms: f32,
+    pub frame_time_p99_ms: f32,
+    pub low1_fps: f32,
+    pub low01_fps: f32,
+
+    pub hitches: u32,
+    pub hitches_minor: u32,
+    pub hitches_major: u32,
+    pub hitches_severe: u32,
+    pub freezes: u32,
+    pub hitches_per_hour: f32,
+    pub incidents: u32,
+    pub top_causes: Vec<CauseCount>,
+
+    pub cpu_avg_pct: f32,
+    pub cpu_max_pct: f32,
+    pub game_cpu_avg_pct: f32,
+    pub cpu_freq_limit_min_pct: f32,
+    pub ram_used_avg_mb: f32,
+    pub ram_used_max_mb: f32,
+    pub game_ram_max_mb: f32,
+
+    pub gpu_util_avg_pct: Option<f32>,
+    pub gpu_util_max_pct: Option<f32>,
+    pub gpu_temp_avg_c: Option<f32>,
+    pub gpu_temp_max_c: Option<f32>,
+    pub gpu_power_avg_w: Option<f32>,
+    pub gpu_power_max_w: Option<f32>,
+    pub gpu_clock_avg_mhz: Option<f32>,
+    pub gpu_fan_avg_pct: Option<f32>,
+    pub vram_avg_mb: Option<f32>,
+    pub vram_max_mb: Option<f32>,
+    pub gpu_throttle_pct: Option<f32>,
+
+    pub dpc_max_us: u32,
+    pub isr_max_us: u32,
+    pub disk_lat_max_ms: f32,
+    pub fullscreen_pct: f32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GameRecord {
+    pub name: String,
+    pub sessions: Vec<SessionStats>,
+    pub last3: Option<SessionStats>,
+    pub live: Option<SessionStats>,
+    pub total_sessions: u32,
+    pub total_play_sec: u64,
+    pub last_played_ts: i64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Toast {

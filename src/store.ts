@@ -13,7 +13,7 @@ import {
   type Toast,
 } from './lib/contract'
 
-export type PageId = 'live' | 'incidents' | 'drivers' | 'processes' | 'system' | 'causes' | 'settings'
+export type PageId = 'live' | 'games' | 'incidents' | 'drivers' | 'processes' | 'system' | 'causes' | 'settings'
 
 export const DEFAULT_SETTINGS: Settings = {
   lang: 'en',

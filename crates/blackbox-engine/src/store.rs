@@ -7,7 +7,9 @@
 //!
 //! Nothing is written unless something changed; writes go through a temp file + rename.
 
-use blackbox_core::model::{Incident, Settings};
+use blackbox_core::model::{GameRecord, Incident, SessionStats, Settings};
+use blackbox_core::session;
+use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::fs;
 use std::io;
@@ -192,10 +194,139 @@ impl Store {
     }
 }
 
+/// Sessions kept per game, and games kept overall.
+const SESSIONS_PER_GAME: usize = 20;
+const MAX_GAMES: usize = 50;
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+struct GameEntry {
+    name: String,
+    sessions: Vec<SessionStats>,
+    total_sessions: u32,
+    total_play_sec: u64,
+}
+
+/// Per-game play sessions: `games.json`, written once per finished session.
+#[derive(Debug)]
+pub struct GameStore {
+    path: PathBuf,
+    games: Vec<GameEntry>,
+}
+
+impl GameStore {
+    pub fn open(data_dir: &Path) -> GameStore {
+        let path = data_dir.join("games.json");
+        let games = fs::read(&path).ok().and_then(|b| serde_json::from_slice::<Vec<GameEntry>>(&b).ok()).unwrap_or_default();
+        GameStore { path, games }
+    }
+
+    fn record(e: &GameEntry, live: Option<&SessionStats>) -> GameRecord {
+        GameRecord {
+            name: e.name.clone(),
+            last3: session::average(&e.sessions[..e.sessions.len().min(3)]),
+            live: live.cloned(),
+            total_sessions: e.total_sessions,
+            total_play_sec: e.total_play_sec,
+            last_played_ts: live.map(|l| l.end_ts).or_else(|| e.sessions.first().map(|s| s.end_ts)).unwrap_or(0),
+            sessions: e.sessions.clone(),
+        }
+    }
+
+    /// Saves a finished session and returns the game's updated record.
+    pub fn add(&mut self, s: SessionStats) -> GameRecord {
+        let i = match self.games.iter().position(|g| g.name.eq_ignore_ascii_case(&s.game)) {
+            Some(i) => i,
+            None => {
+                self.games.push(GameEntry { name: s.game.clone(), ..Default::default() });
+                self.games.len() - 1
+            }
+        };
+        let mut e = self.games.remove(i);
+        e.total_sessions += 1;
+        e.total_play_sec += s.duration_sec;
+        e.sessions.insert(0, s);
+        e.sessions.truncate(SESSIONS_PER_GAME);
+        self.games.insert(0, e); // most recently played first
+        self.games.truncate(MAX_GAMES);
+        self.save();
+        Self::record(&self.games[0], None)
+    }
+
+    /// Every game, most recently played first; `live` is attached to its game (created if new).
+    pub fn records(&self, live: Option<&SessionStats>) -> Vec<GameRecord> {
+        let mut out: Vec<GameRecord> = Vec::with_capacity(self.games.len() + 1);
+        if let Some(l) = live {
+            if !self.games.iter().any(|g| g.name.eq_ignore_ascii_case(&l.game)) {
+                out.push(Self::record(&GameEntry { name: l.game.clone(), ..Default::default() }, Some(l)));
+            }
+        }
+        for g in &self.games {
+            let l = live.filter(|l| l.game.eq_ignore_ascii_case(&g.name));
+            out.push(Self::record(g, l));
+        }
+        out.sort_by_key(|r| std::cmp::Reverse(r.last_played_ts));
+        out
+    }
+
+    pub fn delete(&mut self, name: &str) {
+        let before = self.games.len();
+        self.games.retain(|g| !g.name.eq_ignore_ascii_case(name));
+        if self.games.len() != before {
+            self.save();
+        }
+    }
+
+    fn save(&self) {
+        match serde_json::to_vec(&self.games) {
+            Ok(b) => {
+                if let Err(e) = write_atomic(&self.path, &b) {
+                    log::warn!("game sessions not saved: {e}");
+                }
+            }
+            Err(e) => log::warn!("game sessions not serialized: {e}"),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use blackbox_core::model::*;
+
+    #[test]
+    fn game_store_keeps_newest_sessions_and_averages_last_three() {
+        let dir = temp_dir("games");
+        let mut g = GameStore::open(&dir);
+        for (i, fps) in [100.0, 200.0, 300.0, 400.0].into_iter().enumerate() {
+            let rec = g.add(SessionStats {
+                id: format!("s{i}"),
+                game: "Game.exe".into(),
+                sessions: 1,
+                end_ts: i as i64,
+                duration_sec: 600,
+                fps_avg: fps,
+                ..Default::default()
+            });
+            assert_eq!(rec.total_sessions, i as u32 + 1);
+        }
+        g.add(SessionStats { game: "Other.exe".into(), end_ts: 10, duration_sec: 60, ..Default::default() });
+        let recs = GameStore::open(&dir).records(None);
+        assert_eq!(recs[0].name, "Other.exe", "most recently played first");
+        let game = &recs[1];
+        assert_eq!(game.sessions[0].id, "s3", "newest session first");
+        assert_eq!(game.last3.as_ref().unwrap().fps_avg, 300.0, "average of 400, 300, 200");
+        assert_eq!(game.total_play_sec, 2400);
+
+        let live = SessionStats { game: "New.exe".into(), end_ts: 99, ..Default::default() };
+        let recs = g.records(Some(&live));
+        assert_eq!(recs[0].name, "New.exe");
+        assert!(recs[0].live.is_some() && recs[0].sessions.is_empty());
+
+        g.delete("game.exe");
+        assert_eq!(GameStore::open(&dir).records(None).len(), 1);
+        let _ = fs::remove_dir_all(&dir);
+    }
 
     fn incident(id: &str) -> Incident {
         Incident {

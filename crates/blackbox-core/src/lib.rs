@@ -5,6 +5,7 @@
 //! - [`frames`]: frame pacing and hitch detection
 //! - [`analyze`]: cause analysis and incident timelines
 //! - [`health`]: global health state
+//! - [`session`]: per-game play-session statistics
 //! - [`kb`]: cause -> consequence -> fix knowledge base, driver and process knowledge
 //! - [`i18n`]: the few strings rendered natively
 
@@ -15,3 +16,4 @@ pub mod i18n;
 pub mod kb;
 pub mod model;
 pub mod series;
+pub mod session;

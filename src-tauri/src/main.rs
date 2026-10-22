@@ -179,6 +179,17 @@ fn open_data_folder(state: State<'_, AppState>) -> CmdResult<()> {
     std::process::Command::new("explorer.exe").arg(&state.data_dir).spawn().map(|_| ()).map_err(|e| e.to_string())
 }
 
+#[tauri::command(async)]
+fn get_games(state: State<'_, AppState>) -> CmdResult<Vec<GameRecord>> {
+    Ok(state.engine.games())
+}
+
+#[tauri::command(async)]
+fn delete_game(state: State<'_, AppState>, name: String) -> CmdResult<()> {
+    state.engine.delete_game(&name);
+    Ok(())
+}
+
 fn reveal(path: &std::path::Path) {
     use std::os::windows::process::CommandExt;
     // explorer parses /select itself: pass the quoted path verbatim.
@@ -215,6 +226,8 @@ fn main() {
             restart_elevated,
             test_notification,
             open_data_folder,
+            get_games,
+            delete_game,
         ])
         .on_window_event(on_window_event)
         .setup(move |app| {

@@ -10,6 +10,7 @@ import { bootError, page, ready, type PageId } from './store'
 // Live is the landing page; the others load on first visit.
 const PAGES: Record<PageId, Component> = {
   live: LivePage,
+  games: defineAsyncComponent(() => import('./pages/GamesPage.vue')),
   incidents: defineAsyncComponent(() => import('./pages/IncidentsPage.vue')),
   drivers: defineAsyncComponent(() => import('./pages/DriversPage.vue')),
   processes: defineAsyncComponent(() => import('./pages/ProcessesPage.vue')),

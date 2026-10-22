@@ -15,6 +15,9 @@ it. In English and French.
   reasons), disks (throughput, latency), network → the processes using CPU and I/O.
 - **Game frame pacing**: FPS, frame-time graph, p99 and 1 % lows of the foreground game, read from
   ETW (no injection, no overlay hook: anti-cheat safe).
+- **Per-game history**: every play session is saved per game (FPS, 1 % and 0.1 % lows,
+  frame-time percentiles, hitches per hour, GPU load/temperature/power/clocks/VRAM, CPU and RAM,
+  driver and disk latency, top causes), with the average of the last 3 sessions and the trend.
 - **Incidents, explained**: stutters, freezes, driver latency spikes (audio crackle, input lag),
   apps not responding, sustained throttling, memory/disk pressure. Each incident has a verdict
   with a confidence, the evidence, the checks that came back clean, the fixes, and a synced

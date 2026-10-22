@@ -323,6 +323,83 @@ export interface Toast {
   cause: CauseMatch | null // when set, the UI renders the KB title of cause.id as the body
 }
 
+// ───────────────────────────── per-game play sessions (Games tab)
+
+/**
+ * Statistics of one play session (or the average of several, see GameRecord.last3).
+ * A session lasts while the game runs; time spent out of the game (alt-tab) is excluded.
+ * GPU fields are null without NVML (non-NVIDIA). CPU temperature is not measured in v0.1.
+ */
+export interface SessionStats {
+  id: string // session id, or "avg3" for an average
+  game: string // exe name, e.g. "Overwatch.exe"
+  sessions: number // 1, or how many sessions were averaged
+  startTs: number
+  endTs: number
+  durationSec: number // time actually spent in the game
+  fullTracing: boolean // false = limited mode (no DPC/ISR/disk latency)
+
+  // frames
+  frames: number
+  fpsAvg: number
+  fpsMin1s: number // worst 1-second average FPS
+  fpsMax1s: number
+  frameTimeAvgMs: number
+  frameTimeP50Ms: number
+  frameTimeP95Ms: number
+  frameTimeP99Ms: number
+  low1Fps: number // 1% low: average FPS of the slowest 1% of frames
+  low01Fps: number // 0.1% low
+
+  // stability
+  hitches: number // all confirmed hitches (incl. minor)
+  hitchesMinor: number
+  hitchesMajor: number
+  hitchesSevere: number
+  freezes: number // frames >= 500 ms
+  hitchesPerHour: number
+  incidents: number // incidents recorded for this game during the session(s)
+  topCauses: { id: string; count: number }[] // KB ids, most frequent first (max 5)
+
+  // CPU and memory
+  cpuAvgPct: number
+  cpuMaxPct: number
+  gameCpuAvgPct: number // the game process, % of the whole machine
+  cpuFreqLimitMinPct: number // 100 = never throttled
+  ramUsedAvgMb: number
+  ramUsedMaxMb: number
+  gameRamMaxMb: number // game working set peak
+
+  // GPU (NVIDIA / NVML)
+  gpuUtilAvgPct: number | null
+  gpuUtilMaxPct: number | null
+  gpuTempAvgC: number | null
+  gpuTempMaxC: number | null
+  gpuPowerAvgW: number | null
+  gpuPowerMaxW: number | null
+  gpuClockAvgMhz: number | null
+  gpuFanAvgPct: number | null
+  vramAvgMb: number | null
+  vramMaxMb: number | null
+  gpuThrottlePct: number | null // share of seconds with a power/thermal limit active
+
+  // system latency (full tracing only, else 0)
+  dpcMaxUs: number
+  isrMaxUs: number
+  diskLatMaxMs: number
+  fullscreenPct: number
+}
+
+export interface GameRecord {
+  name: string // exe name
+  sessions: SessionStats[] // newest first, up to 20
+  last3: SessionStats | null // duration-weighted average of the newest 3 sessions (fewer if fewer)
+  live: SessionStats | null // the session in progress, if this game is being played right now
+  totalSessions: number
+  totalPlaySec: number
+  lastPlayedTs: number
+}
+
 // ───────────────────────────── IPC surface
 
 export const EVENTS = {
@@ -330,6 +407,7 @@ export const EVENTS = {
   incident: 'bb:incident', // Incident (no timeline)
   toast: 'bb:toast', // Toast
   settings: 'bb:settings', // Settings
+  session: 'bb:session', // GameRecord: a play session was saved for this game
 } as const
 
 /** Tauri command names (invoke) and their signatures. */
@@ -348,6 +426,8 @@ export interface Commands {
   restart_elevated: () => void
   test_notification: () => void
   open_data_folder: () => void
+  get_games: () => GameRecord[] // most recently played first
+  delete_game: (args: { name: string }) => void // forget a game's session history
 }
 
 // ───────────────────────────── translation keys the UI must provide (EN + FR)

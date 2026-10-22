@@ -106,6 +106,18 @@ Pausing stops both ETW sessions (zero cost). Resuming takes fresh baselines so t
 isn't polluted by counters accumulated during the pause. If a session is stopped from outside,
 the engine notices within 5 s and restarts tracing.
 
+## Play sessions (Games tab)
+
+A session lasts while the game runs: alt-tabs don't split it (the time away is excluded), and it
+ends after 5 minutes out of the game, when the game exits, or when Blackbox pauses or quits.
+Sessions shorter than 60 s of play are not kept. Statistics use fixed memory however long you
+play: frame times go into a histogram (0.1 ms bins up to 50 ms, 5 ms up to 1 s) for the
+percentiles and the 1 % / 0.1 % lows, and the once-per-second readings (CPU, game CPU and RAM,
+frequency limit, GPU load/temperature/power/clock/fan/VRAM/limits, worst DPC/ISR and disk
+latency, fullscreen) into running sums and extremes. `games.json` keeps 20 sessions per game
+(50 games), written once per finished session. "Last 3" is a duration-weighted average: maxima
+stay maxima, counts are summed, rates are recomputed from the sums.
+
 ## Analysis
 
 `analyze()` looks at the *focus window* (the long frame itself, slightly widened) against a 20 s
@@ -133,6 +145,7 @@ English one.
 `%LOCALAPPDATA%\Blackbox\`:
 
 - `settings.json`
+- `games.json`: play sessions per game
 - `incidents\index.json`: summaries, loaded at start
 - `incidents\<id>.json`: one incident with its 6.5 s timeline, loaded on demand
 - `blackbox.log`: reset past 1 MB
@@ -145,7 +158,7 @@ the machine.
 
 The contract is `src/lib/contract.ts`, mirrored by `crates/blackbox-core/src/model.rs`.
 Events: `bb:status` (1 Hz, only while the dashboard is visible), `bb:incident`, `bb:toast`,
-`bb:settings`. Commands: see `Commands` in the contract and `src-tauri/src/main.rs`.
+`bb:settings`, `bb:session` (a play session was saved). Commands: see `Commands` in the contract and `src-tauri/src/main.rs`.
 
 ## Notifications
 

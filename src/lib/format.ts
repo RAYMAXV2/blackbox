@@ -58,6 +58,20 @@ export function fmtDuration(sec: number): string {
   return `${r} s`
 }
 
+/** Coarse play time: "1 h 24 min", "24 min", "45 s". */
+export function fmtPlaytime(sec: number): string {
+  const s = Math.max(0, Math.round(sec))
+  const h = Math.floor(s / 3600)
+  const m = Math.floor((s % 3600) / 60)
+  if (h > 0) return `${h} h ${String(m).padStart(2, '0')} min`
+  if (m > 0) return `${m} min`
+  return `${s} s`
+}
+
+export function fmtDateShort(ts: number): string {
+  return new Date(ts).toLocaleString(locale(), { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })
+}
+
 export function fmtTime(ts: number): string {
   return new Date(ts).toLocaleTimeString(locale(), { hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' })
 }

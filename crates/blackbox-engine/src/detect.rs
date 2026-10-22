@@ -10,6 +10,7 @@ use blackbox_core::kb;
 use blackbox_core::model::*;
 use blackbox_core::params;
 use blackbox_core::series::*;
+use blackbox_sys::foreground::is_window_hung;
 use std::sync::Arc;
 
 /// Minimum spacing between two hitch incidents of the same severity; hitches in between are
@@ -147,24 +148,31 @@ impl Recorder {
     }
 
     pub(crate) fn detect_hang(&mut self, now: Micros) {
-        let pid = self.fg.pid();
-        let hung = pid != 0 && pid != self.own_pid && self.fg.is_hung();
-        // IsHungAppWindow turns true after ~5 s without message processing.
-        let report = match (&mut self.hang, hung) {
-            (None, true) => {
-                self.hang = Some(HangState { pid, since: now - 5_000_000, reported: false });
+        // Follow the hung window itself, not the foreground: Windows soon covers a hung
+        // window with a "ghost" owned by another process, while the app is still frozen.
+        let report = match self.hang.as_mut() {
+            Some(h) => {
+                let still = is_window_hung(h.hwnd);
+                if still && !h.reported && now - h.since >= 20_000_000 {
+                    h.reported = true;
+                    Some((h.pid, h.since))
+                } else if !still {
+                    let r = (!h.reported).then_some((h.pid, h.since));
+                    self.hang = None;
+                    r
+                } else {
+                    None
+                }
+            }
+            None => {
+                let pid = self.fg.pid();
+                if pid != 0 && !self.own_family.contains(&pid) && !self.fg.is_ghost() && self.fg.is_hung() {
+                    // IsHungAppWindow turns true after ~5 s without message processing.
+                    let hwnd = self.fg.hwnd() as isize;
+                    self.hang = Some(HangState { pid, hwnd, since: now - 5_000_000, reported: false });
+                }
                 None
             }
-            (Some(h), true) if h.pid == pid && !h.reported && now - h.since >= 20_000_000 => {
-                h.reported = true;
-                Some((h.pid, h.since))
-            }
-            (Some(h), _) if !hung || h.pid != pid => {
-                let r = (!h.reported).then_some((h.pid, h.since));
-                self.hang = None;
-                r
-            }
-            _ => None,
         };
         if let Some((pid, since)) = report {
             if self.debounced(&format!("hang:{pid}"), now, HANG_DEBOUNCE_US) {
@@ -270,6 +278,9 @@ impl Recorder {
             let inc = self.finalize(p);
             self.recent.push_back((now, inc.severity));
             self.incidents_session += 1;
+            if let Some(g) = self.game.as_mut().filter(|g| inc.app.as_ref().is_some_and(|a| a.pid == g.pid)) {
+                g.accum.add_incident(inc.causes.first().map(|c| c.id.as_str()));
+            }
             log::info!("incident {} {:?} {:?}", inc.id, inc.kind, inc.causes.first().map(|c| &c.id));
             let summary = inc.summary();
             self.store.lock().unwrap_or_else(|e| e.into_inner()).add(inc);

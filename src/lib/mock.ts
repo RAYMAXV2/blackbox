@@ -5,6 +5,7 @@
 
 import kbJson from '../../crates/blackbox-core/kb/signatures.json'
 import type { Backend } from './ipc'
+import { deleteGame, endLiveSession, getGames } from './mockGames'
 import {
   EVENTS,
   type Bootstrap,
@@ -691,6 +692,7 @@ for (const [ago, kind] of [
 // ── live status ──────────────────────────────────────────────────────────
 let last: LiveStatus | null = null
 let nextIncidentAt = START + rr(8, 14) * 1000
+let nextSessionEndAt = START + rr(120, 180) * 1000
 const rx = { v: 0 }
 
 function tick() {
@@ -698,6 +700,13 @@ function tick() {
   const paused = settings.paused
   const effMode: Mode = paused ? 'paused' : mode
   const tracing = effMode === 'full'
+
+  // the game session "ends" now and then: it joins the Games history
+  if (tracing && HAS_GAME && ts >= nextSessionEndAt) {
+    nextSessionEndAt = ts + rr(120, 180) * 1000
+    const rec = endLiveSession(GAME.name)
+    if (rec) emit(EVENTS.session, rec)
+  }
 
   // incidents
   let spikeMs: number | null = null
@@ -1025,6 +1034,11 @@ async function invoke(cmd: string, args?: Record<string, unknown>): Promise<unkn
     }
     case 'open_data_folder':
       console.info('[mock] open_data_folder')
+      return null
+    case 'get_games':
+      return structuredClone(getGames(HAS_GAME && mode === 'full' && !settings.paused ? GAME.name : null))
+    case 'delete_game':
+      deleteGame(String(args?.name))
       return null
     default:
       throw new Error(`[mock] unknown command ${cmd}`)

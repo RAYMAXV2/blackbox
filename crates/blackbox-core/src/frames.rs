@@ -10,6 +10,7 @@
 
 use crate::model::{FramePoint, IncidentKind, Sensitivity, Severity};
 use crate::series::Micros;
+use crate::session::FrameHist;
 use std::collections::VecDeque;
 
 /// Frames kept for statistics and incident timelines (~30 s at 240 fps).
@@ -26,6 +27,41 @@ const CONFIRM_FRAMES: u32 = 3;
 const LEVEL_SHIFT_FRAMES: usize = 8;
 /// Steady frames required before a long frame can start a hitch (filters bursty renderers).
 const STEADY_FRAMES: u32 = 30;
+/// Stats are blank when the newest frame is older than this (game not rendering).
+const STALE_US: Micros = 3_500_000;
+
+/// What makes the foreground app "a game": it keeps presenting, at ≥ `GAME_MIN_FPS` on
+/// average over `GAME_SPAN_US`, without a gap longer than `GAME_MAX_GAP_US`.
+/// Judged on present timestamps, so the irregular delivery of ETW buffers doesn't matter.
+pub const GAME_MIN_FPS: f32 = 30.0;
+pub const GAME_SPAN_US: Micros = 2_500_000;
+pub const GAME_MAX_GAP_US: Micros = 500_000;
+
+/// `presents` are timestamps in ascending order; only the newest `GAME_SPAN_US` are judged.
+pub fn steady_presenter(presents: &VecDeque<Micros>) -> bool {
+    let Some(&newest) = presents.back() else {
+        return false;
+    };
+    let from = newest - GAME_SPAN_US;
+    let mut count = 0u32;
+    let mut prev: Option<Micros> = None;
+    let mut first = newest;
+    for &t in presents.iter().rev() {
+        if t < from {
+            break;
+        }
+        if let Some(p) = prev {
+            if p - t > GAME_MAX_GAP_US {
+                return false;
+            }
+        }
+        prev = Some(t);
+        first = t;
+        count += 1;
+    }
+    let span_s = (newest - first) as f32 / 1e6;
+    span_s >= (GAME_SPAN_US as f32 / 1e6) * 0.9 && count as f32 / span_s >= GAME_MIN_FPS
+}
 
 #[derive(Debug, Clone, Copy)]
 pub struct HitchRule {
@@ -95,6 +131,8 @@ pub struct FrameTracker {
     normal_after: u32,
     steady: u32,
     scratch: Vec<f32>,
+    /// Every frame of the session, for percentiles and lows over hours of play.
+    pub hist: FrameHist,
 }
 
 impl FrameTracker {
@@ -117,6 +155,7 @@ impl FrameTracker {
             normal_after: 0,
             steady: 0,
             scratch: Vec::with_capacity(FRAME_RING),
+            hist: FrameHist::default(),
         }
     }
 
@@ -149,6 +188,7 @@ impl FrameTracker {
             return None;
         }
         self.frames_seen += 1;
+        self.hist.add(ms);
         if self.frames.len() == FRAME_RING {
             self.frames.pop_front();
         }
@@ -224,9 +264,17 @@ impl FrameTracker {
         }
     }
 
+    /// Statistics over the newest frames. ETW delivers presents up to ~2 s late, so the windows
+    /// end at the newest frame, not at `now`. No frame for 3 s means the game isn't rendering.
     pub fn stats(&mut self, now_us: Micros) -> FrameStats {
-        let one_s = now_us - 1_000_000;
-        let ten_s = now_us - 10_000_000;
+        let Some(&(newest, _)) = self.frames.back() else {
+            return FrameStats::default();
+        };
+        if now_us - newest > STALE_US {
+            return FrameStats::default();
+        }
+        let one_s = newest - 1_000_000;
+        let ten_s = newest - 10_000_000;
         let mut last_sec = (0u32, 0f32);
         self.scratch.clear();
         for &(t, ms) in self.frames.iter().rev() {
@@ -370,6 +418,43 @@ mod tests {
             hitches += feed(&mut tr, &mut t, 10, 16.6, &rule()).len();
         }
         assert!(hitches <= 1, "{hitches}");
+    }
+
+    #[test]
+    fn stats_follow_the_newest_frame_not_now() {
+        let mut tr = FrameTracker::new(1, 0);
+        let mut t = 0;
+        feed(&mut tr, &mut t, 600, 10.0, &rule()); // 100 fps
+        // ETW delivered these frames ~1.8 s late: the FPS must still read 100.
+        let s = tr.stats(t + 1_800_000);
+        assert!((s.fps - 100.0).abs() < 1.0, "{}", s.fps);
+        // Nothing for 4 s: the game isn't rendering.
+        assert_eq!(tr.stats(t + 4_000_000).fps, 0.0);
+    }
+
+    fn presents(fps: f32, secs: f32, gap_at: Option<(f32, f32)>) -> VecDeque<Micros> {
+        let mut out = VecDeque::new();
+        let mut t = 0f32;
+        while t < secs {
+            out.push_back((t * 1e6) as Micros);
+            t += 1.0 / fps;
+            if let Some((at, len)) = gap_at {
+                if t >= at && t < at + 1.0 / fps {
+                    t += len;
+                }
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn steady_presenter_needs_rate_duration_and_no_gaps() {
+        assert!(steady_presenter(&presents(60.0, 3.0, None)));
+        assert!(steady_presenter(&presents(240.0, 2.6, None)));
+        assert!(!steady_presenter(&presents(20.0, 5.0, None)), "too slow");
+        assert!(!steady_presenter(&presents(144.0, 1.5, None)), "too short");
+        assert!(!steady_presenter(&presents(60.0, 3.0, Some((2.0, 0.8)))), "editor-style pause");
+        assert!(!steady_presenter(&VecDeque::new()));
     }
 
     #[test]

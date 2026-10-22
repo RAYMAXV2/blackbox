@@ -1,7 +1,7 @@
-//! Public engine handle: thread lifecycle, commands and queries.
+﻿//! Public engine handle: thread lifecycle, commands and queries.
 
 use crate::recorder::{ProcNow, Recorder};
-use crate::store::{self, Store};
+use crate::store::{self, GameStore, Store};
 use blackbox_core::kb::{self, Kb};
 use blackbox_core::model::*;
 use blackbox_sys::drivers::DriverRegistry;
@@ -51,6 +51,8 @@ pub trait EngineSink: Send + Sync + 'static {
     fn notify(&self, notification: &Notification);
     fn tray(&self, state: &TrayState);
     fn settings(&self, _settings: &Settings) {}
+    /// A play session was saved: the game's updated record.
+    fn session(&self, _record: &GameRecord) {}
 }
 
 pub(crate) enum Cmd {
@@ -70,11 +72,14 @@ pub(crate) struct Public {
     pub procs: Vec<ProcNow>,
     pub drivers: Vec<DriverStat>,
     pub drivers_max: Vec<(u32, u32)>,
+    /// The play session in progress (published while the UI is visible).
+    pub live_session: Option<SessionStats>,
 }
 
 pub(crate) struct Shared {
     pub kb: Arc<Kb>,
     pub store: Arc<Mutex<Store>>,
+    pub games: Arc<Mutex<GameStore>>,
     pub public: Mutex<Public>,
     pub ui_active: AtomicBool,
     pub registry: Arc<DriverRegistry>,
@@ -101,11 +106,13 @@ impl Engine {
         let settings = store::load_settings(&cfg.data_dir);
         let kb = Arc::new(Kb::load());
         let store = Arc::new(Mutex::new(Store::open(&cfg.data_dir, settings.retention)));
+        let games = Arc::new(Mutex::new(GameStore::open(&cfg.data_dir)));
         let registry = DriverRegistry::new();
-        let rec = Recorder::new(&cfg, settings.clone(), kb.clone(), store.clone(), registry.clone());
+        let rec = Recorder::new(&cfg, settings.clone(), kb.clone(), store.clone(), games.clone(), registry.clone());
         let shared = Arc::new(Shared {
             kb,
             store,
+            games,
             public: Mutex::new(Public {
                 status: None,
                 system: rec.system_info(),
@@ -113,6 +120,7 @@ impl Engine {
                 procs: Vec::new(),
                 drivers: Vec::new(),
                 drivers_max: Vec::new(),
+                live_session: None,
             }),
             ui_active: AtomicBool::new(false),
             registry,
@@ -194,6 +202,16 @@ impl Engine {
         let mut v: Vec<ProcLive> = p.procs.iter().map(ProcNow::to_live).collect();
         v.sort_by(|a, b| b.cpu_pct.total_cmp(&a.cpu_pct).then_with(|| b.io_bps.total_cmp(&a.io_bps)));
         v
+    }
+
+    /// Every game with its sessions, most recently played first.
+    pub fn games(&self) -> Vec<GameRecord> {
+        let live = self.shared.public().live_session.clone();
+        self.shared.games.lock().unwrap_or_else(|p| p.into_inner()).records(live.as_ref())
+    }
+
+    pub fn delete_game(&self, name: &str) {
+        self.shared.games.lock().unwrap_or_else(|p| p.into_inner()).delete(name);
     }
 
     pub fn settings(&self) -> Settings {

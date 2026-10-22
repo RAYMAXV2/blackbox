@@ -3,7 +3,7 @@
 
 use crate::overlay::Overlay;
 use crate::tray;
-use blackbox_core::model::{Incident, LiveStatus, Settings};
+use blackbox_core::model::{GameRecord, Incident, LiveStatus, Settings};
 use blackbox_engine::{EngineSink, Notification, TrayState};
 use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::{AppHandle, Emitter};
@@ -55,6 +55,12 @@ impl EngineSink for AppSink {
     fn settings(&self, settings: &Settings) {
         if self.window_open.load(Ordering::Relaxed) {
             let _ = self.app.emit("bb:settings", settings);
+        }
+    }
+
+    fn session(&self, record: &GameRecord) {
+        if self.window_open.load(Ordering::Relaxed) {
+            let _ = self.app.emit("bb:session", record);
         }
     }
 }

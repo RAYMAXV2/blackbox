@@ -8,8 +8,8 @@ use windows_sys::Win32::Foundation::{HWND, RECT};
 use windows_sys::Win32::Graphics::Gdi::{GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST};
 use windows_sys::Win32::UI::Accessibility::{SetWinEventHook, HWINEVENTHOOK};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    DispatchMessageW, GetForegroundWindow, GetMessageW, GetShellWindow, GetWindowRect, GetWindowThreadProcessId,
-    IsHungAppWindow, TranslateMessage, EVENT_SYSTEM_FOREGROUND, MSG, WINEVENT_OUTOFCONTEXT,
+    DispatchMessageW, GetClassNameW, GetForegroundWindow, GetMessageW, GetShellWindow, GetWindowRect,
+    GetWindowThreadProcessId, IsHungAppWindow, TranslateMessage, EVENT_SYSTEM_FOREGROUND, MSG, WINEVENT_OUTOFCONTEXT,
 };
 
 #[derive(Debug, Default)]
@@ -81,9 +81,25 @@ impl Foreground {
 
     /// Windows considers the foreground window hung (no message processed for 5 s).
     pub fn is_hung(&self) -> bool {
-        let hwnd = self.hwnd();
-        !hwnd.is_null() && unsafe { IsHungAppWindow(hwnd) } != 0
+        is_window_hung(self.hwnd() as isize)
     }
+
+    /// The foreground window is the "ghost" Windows puts over a hung window: the real app is
+    /// still the one that was there before.
+    pub fn is_ghost(&self) -> bool {
+        let hwnd = self.hwnd();
+        if hwnd.is_null() {
+            return false;
+        }
+        let mut buf = [0u16; 16];
+        let n = unsafe { GetClassNameW(hwnd, buf.as_mut_ptr(), buf.len() as i32) };
+        n > 0 && String::from_utf16_lossy(&buf[..n as usize]) == "Ghost"
+    }
+}
+
+/// `hwnd` (as returned by [`Foreground::hwnd`]) is hung. False for closed windows.
+pub fn is_window_hung(hwnd: isize) -> bool {
+    hwnd != 0 && unsafe { IsHungAppWindow(hwnd as HWND) } != 0
 }
 
 unsafe extern "system" fn on_foreground(

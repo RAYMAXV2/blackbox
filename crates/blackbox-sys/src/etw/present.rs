@@ -1,10 +1,9 @@
-//! Frame presents (DXGI for D3D10/11/12, D3D9) from user-mode providers, filtered in the
+﻿//! Frame presents (DXGI for D3D10/11/12, D3D9) from user-mode providers, filtered in the
 //! provider to the single "Present_Start" event. Only the foreground process's frames are kept.
 
 use super::{read_u32, read_u64, user_data, EventSink, ProviderSpec, SessionSpec};
 use crate::foreground::Foreground;
 use crate::util::{guid, guid_eq, Clock};
-use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use windows_sys::core::GUID;
 use windows_sys::Win32::System::Diagnostics::Etw::EVENT_RECORD;
@@ -45,21 +44,18 @@ pub struct PresentEvent {
 #[derive(Debug, Default)]
 pub struct PresentData {
     pub frames: Vec<PresentEvent>,
-    /// Presents per process since the last drain (who is rendering).
-    pub counts: HashMap<u32, u32>,
 }
 
 pub struct PresentSink {
     clock: Clock,
     fg: Arc<Foreground>,
     pending: Vec<PresentEvent>,
-    counts: HashMap<u32, u32>,
     shared: Arc<Mutex<PresentData>>,
 }
 
 impl PresentSink {
     pub fn new(clock: Clock, fg: Arc<Foreground>, shared: Arc<Mutex<PresentData>>) -> PresentSink {
-        PresentSink { clock, fg, pending: Vec::with_capacity(512), counts: HashMap::with_capacity(32), shared }
+        PresentSink { clock, fg, pending: Vec::with_capacity(512), shared }
     }
 }
 
@@ -78,7 +74,6 @@ impl EventSink for PresentSink {
             return; // occlusion test, not a frame
         }
         let pid = h.ProcessId;
-        *self.counts.entry(pid).or_insert(0) += 1;
         if pid == self.fg.pid() {
             self.pending.push(PresentEvent { t_us: self.clock.qpc_to_us(h.TimeStamp), pid, swapchain });
         }
@@ -89,8 +84,5 @@ impl EventSink for PresentSink {
             return;
         };
         s.frames.append(&mut self.pending);
-        for (pid, n) in self.counts.drain() {
-            *s.counts.entry(pid).or_insert(0) += n;
-        }
     }
 }

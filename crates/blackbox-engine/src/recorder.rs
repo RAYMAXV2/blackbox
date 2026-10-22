@@ -1,19 +1,20 @@
 ﻿//! The recorder: owns the collectors and every in-memory series. Runs on the engine thread.
 
 use crate::engine::{Cmd, EngineConfig, EngineSink, Notification, OverlayText, Shared, TrayState};
-use crate::store::{self, Store};
+use crate::store::{self, GameStore, Store};
 use crate::sysinfo;
-use blackbox_core::frames::{FrameTracker, HitchRule};
+use blackbox_core::frames::{steady_presenter, FrameTracker, HitchRule, GAME_SPAN_US};
 use blackbox_core::i18n;
 use blackbox_core::kb::{self, Kb};
 use blackbox_core::model::*;
 use blackbox_core::params;
 use blackbox_core::series::*;
+use blackbox_core::session::{SessionAccum, TickSample};
 use blackbox_sys::drivers::DriverRegistry;
 use blackbox_sys::etw::kernel::{self as kernel_etw, DriverStat, KernelData, KernelSink, RawProcEvent};
 use blackbox_sys::etw::present::{self as present_etw, PresentData, PresentEvent, PresentSink};
 use blackbox_sys::etw::Session;
-use blackbox_sys::foreground::Foreground;
+use blackbox_sys::foreground::{is_window_hung, Foreground};
 use blackbox_sys::nvml::{GpuReading, Nvml};
 use blackbox_sys::snapshot::{CoreTimes, ProcRaw, Snapshotter};
 use blackbox_sys::system::{self, CpuFreq, MemoryInfo, SelfUsage};
@@ -24,12 +25,11 @@ use std::sync::{Arc, Mutex};
 
 /// Driver activity kept for the live view (seconds).
 const DRIVER_WINDOW_S: usize = 10;
-/// A game session ends after the game has been out of focus this long.
-const GAME_AWAY_US: Micros = 10_000_000;
-/// The foreground app is "a game" after this many consecutive seconds at this frame rate
-/// (bursty renderers like editors or terminals never sustain it).
-const GAME_MIN_PRESENTS: u32 = 30;
-const GAME_MIN_SECONDS: u32 = 3;
+/// A game session lasts while the game runs: it only ends after this long out of the game.
+/// (Alt-tabs don't split a play session; the time away isn't counted in its statistics.)
+const GAME_AWAY_US: Micros = 300_000_000;
+/// Shorter sessions (launchers, crashes on start) are not saved.
+const MIN_SESSION_SEC: u64 = 60;
 /// Presents newer than this stay buffered one more tick: late ETW buffers can still arrive.
 const FRAME_HOLD_US: Micros = 250_000;
 /// GPU polling when no game runs and the dashboard is hidden.
@@ -83,12 +83,15 @@ impl ProcNow {
 
 pub(crate) struct GameSession {
     pub pid: u32,
+    /// The game's window, followed while it is hung (Windows then shows a ghost window).
+    pub hwnd: isize,
     pub name: Arc<str>,
     pub tracker: FrameTracker,
     pub started_us: Micros,
     pub away_since: Option<Micros>,
     pub fullscreen: bool,
     pub held: Vec<Incident>,
+    pub accum: SessionAccum,
 }
 
 /// An incident waiting for the data around it (ETW buffers arrive up to ~1 s late).
@@ -111,6 +114,7 @@ pub(crate) struct Pending {
 
 pub(crate) struct HangState {
     pub pid: u32,
+    pub hwnd: isize,
     pub since: Micros,
     pub reported: bool,
 }
@@ -142,7 +146,7 @@ pub(crate) struct Recorder {
     prev: HashMap<(u32, i64), ProcPrev>,
     prev_next: HashMap<(u32, i64), ProcPrev>,
     /// Blackbox and its WebView2 processes: never blamed, never a "game".
-    own_family: HashSet<u32>,
+    pub own_family: HashSet<u32>,
     pub procs: Vec<ProcNow>,
     pub names: HashMap<u32, (Arc<str>, Micros)>,
     pub proc_count: u32,
@@ -183,7 +187,9 @@ pub(crate) struct Recorder {
 
     // detection
     pub game: Option<GameSession>,
-    game_candidate: Option<(u32, u32)>,
+    /// Present timestamps of the foreground app while deciding whether it is a game.
+    candidate_pid: u32,
+    candidate_frames: VecDeque<Micros>,
     pub pending: Vec<Pending>,
     pub last_by_key: HashMap<String, Micros>,
     pub last_hitch: Option<(Micros, Severity)>,
@@ -194,6 +200,7 @@ pub(crate) struct Recorder {
     pub incidents_session: u32,
     next_id: u32,
     pub store: Arc<Mutex<Store>>,
+    pub games: Arc<Mutex<GameStore>>,
 
     // bookkeeping
     last_tick_us: Micros,
@@ -216,6 +223,7 @@ impl Recorder {
         settings: Settings,
         kb: Arc<Kb>,
         store: Arc<Mutex<Store>>,
+        games: Arc<Mutex<GameStore>>,
         registry: Arc<DriverRegistry>,
     ) -> Recorder {
         let clock = Clock::new();
@@ -287,7 +295,8 @@ impl Recorder {
             modules_available: false,
             bad_timestamps_logged: 0,
             game: None,
-            game_candidate: None,
+            candidate_pid: 0,
+            candidate_frames: VecDeque::with_capacity(1024),
             pending: Vec::new(),
             last_by_key: HashMap::new(),
             last_hitch: None,
@@ -298,6 +307,7 @@ impl Recorder {
             incidents_session: 0,
             next_id: 0,
             store,
+            games,
             last_tick_us: now,
             events_prev_total: 0,
             events_rate: 0,
@@ -344,7 +354,7 @@ impl Recorder {
         self.throttle_since = None;
         self.pressure_since = None;
         self.hang = None;
-        self.game_candidate = None;
+        self.candidate_frames.clear();
         self.last_tick_us = now;
     }
 
@@ -396,7 +406,9 @@ impl Recorder {
         if let Some(mut s) = self.frames.take() {
             s.stop();
         }
-        self.game = None;
+        // Pausing or quitting must not lose the play session in progress.
+        let now = self.clock.now_us();
+        self.end_game_session(now, None);
         self.pending.clear();
         self.frame_hold.clear();
     }
@@ -510,6 +522,9 @@ impl Recorder {
         let fresh = self.drain_kernel(now);
         let hitches = self.drain_frames(now, sink);
         for h in hitches {
+            if let Some(g) = self.game.as_mut() {
+                g.accum.add_hitch(h.kind, h.severity);
+            }
             self.on_hitch(h);
         }
         // After the hitches: a spike that caused a long frame is reported once, by the hitch.
@@ -519,6 +534,7 @@ impl Recorder {
 
         let sample = self.second_sample(now);
         self.seconds.push(sample);
+        self.accumulate_session(now, dt);
 
         self.detect_hang(now);
         self.detect_sustained(now);
@@ -539,6 +555,10 @@ impl Recorder {
             p.procs.clone_from(&self.procs);
             p.drivers.clone_from(&self.drv_prev);
             p.drivers_max.clone_from(&self.drv_session_max);
+            p.live_session = self.game.as_ref().and_then(|g| self.session_stats(g)).map(|mut s| {
+                s.id = "live".into();
+                s
+            });
         }
         if self.tick_count % 60 == 0 {
             shared.public().system = self.system_info();
@@ -769,20 +789,19 @@ impl Recorder {
     fn drain_frames(&mut self, now: Micros, sink: &dyn EngineSink) -> Vec<blackbox_core::frames::Hitch> {
         let mut frames = std::mem::take(&mut self.frame_scratch);
         frames.clear();
-        let counts = match self.pdata.lock() {
-            Ok(mut p) => {
-                std::mem::swap(&mut p.frames, &mut frames);
-                std::mem::take(&mut p.counts)
-            }
-            Err(_) => HashMap::new(),
-        };
+        if let Ok(mut p) = self.pdata.lock() {
+            std::mem::swap(&mut p.frames, &mut frames);
+        }
+        frames.sort_unstable_by_key(|f| f.t_us);
         let fg_pid = self.fg.pid();
-        let fg_rate = counts.get(&fg_pid).copied().unwrap_or(0);
+        // A frozen game is covered by a "ghost" window that belongs to another process:
+        // the player is still in the game.
+        let game_hung = self.game.as_ref().is_some_and(|g| is_window_hung(g.hwnd));
 
         // Focus moves: the gap while away is not a frame.
         let mut ended = false;
         if let Some(g) = self.game.as_mut() {
-            if g.pid == fg_pid {
+            if g.pid == fg_pid || game_hung {
                 if g.away_since.take().is_some() {
                     g.tracker.reset_cadence(now);
                     self.frame_hold.clear();
@@ -799,31 +818,40 @@ impl Recorder {
             }
         }
         if ended {
-            self.end_game_session(now, sink);
+            self.end_game_session(now, Some(sink));
         }
 
-        // A game is an app that keeps presenting at a steady rate for a few seconds.
+        // A game is an app that keeps presenting at a steady rate for a few seconds. Judged on
+        // present timestamps: ETW hands frames over in irregular batches.
         if self.game.is_none() {
-            let eligible = fg_pid != 0 && !self.own_family.contains(&fg_pid) && fg_rate >= GAME_MIN_PRESENTS;
-            self.game_candidate = match (self.game_candidate, eligible) {
-                (Some((pid, n)), true) if pid == fg_pid => Some((pid, n + 1)),
-                (_, true) => Some((fg_pid, 1)),
-                (_, false) => None,
-            };
-            if let Some((pid, n)) = self.game_candidate {
-                if n >= GAME_MIN_SECONDS {
-                    let name = self.names.get(&pid).map(|(n, _)| n.clone()).unwrap_or_else(|| Arc::from("game"));
-                    log::info!("game session: {name} (pid {pid})");
+            let eligible = fg_pid != 0 && !self.own_family.contains(&fg_pid) && !self.fg.is_ghost();
+            if !eligible || self.candidate_pid != fg_pid {
+                self.candidate_frames.clear();
+                self.candidate_pid = fg_pid;
+            }
+            if eligible {
+                self.candidate_frames.extend(frames.iter().filter(|f| f.pid == fg_pid).map(|f| f.t_us));
+                if let Some(&newest) = self.candidate_frames.back() {
+                    while self.candidate_frames.front().is_some_and(|&t| t < newest - GAME_SPAN_US) {
+                        self.candidate_frames.pop_front();
+                    }
+                }
+                if steady_presenter(&self.candidate_frames) {
+                    let name = self.names.get(&fg_pid).map(|(n, _)| n.clone()).unwrap_or_else(|| Arc::from("game"));
+                    log::info!("game session: {name} (pid {fg_pid})");
+                    let accum = SessionAccum::new(&name, self.clock.now_unix_ms(), self.mode() == Mode::Full);
                     self.game = Some(GameSession {
-                        pid,
+                        pid: fg_pid,
+                        hwnd: self.fg.hwnd() as isize,
                         name,
-                        tracker: FrameTracker::new(pid, now),
+                        tracker: FrameTracker::new(fg_pid, now),
                         started_us: now,
                         away_since: None,
                         fullscreen: false,
                         held: Vec::new(),
+                        accum,
                     });
-                    self.game_candidate = None;
+                    self.candidate_frames.clear();
                 }
             }
         }
@@ -833,6 +861,12 @@ impl Recorder {
         if let Some(g) = self.game.as_mut().filter(|g| g.pid == fg_pid) {
             self.frame_hold.extend(frames.iter().filter(|f| f.pid == g.pid).copied());
             self.frame_hold.sort_unstable_by_key(|f| f.t_us);
+            // Games recreate their window when switching display modes: follow the current one.
+            g.hwnd = self.fg.hwnd() as isize;
+            if self.tick_count % 60 == 0 {
+                let s = g.tracker.stats(now);
+                log::info!("game {}: {:.0} fps, p99 {:.1} ms, {} hitches", g.name, s.fps, s.p99_ms, g.tracker.hitches);
+            }
             // Several swapchains (overlays, launchers): follow the busiest one.
             let mut chains: Vec<(u64, u32)> = Vec::new();
             for f in &self.frame_hold {
@@ -857,12 +891,28 @@ impl Recorder {
         hitches
     }
 
-    fn end_game_session(&mut self, now: Micros, sink: &dyn EngineSink) {
+    /// Statistics of the session in progress, if it is worth keeping.
+    fn session_stats(&self, g: &GameSession) -> Option<SessionStats> {
+        (g.accum.active_sec() >= MIN_SESSION_SEC).then(|| {
+            g.accum.stats(&format!("{:x}", g.accum.start_ts), self.clock.now_unix_ms(), &g.tracker.hist)
+        })
+    }
+
+    /// Ends the game session: saves its statistics and, in smart mode, sums up what was held.
+    /// `sink` is None when Blackbox itself stops (pause, exit): the session is still saved.
+    pub(crate) fn end_game_session(&mut self, now: Micros, sink: Option<&dyn EngineSink>) {
         let Some(g) = self.game.take() else {
             return;
         };
         self.frame_hold.clear();
-        log::info!("game session ended: {} ({} hitches)", g.name, g.tracker.hitches);
+        log::info!("game session ended: {} ({} hitches, {} s played)", g.name, g.tracker.hitches, g.accum.active_sec());
+        if let Some(stats) = self.session_stats(&g) {
+            let record = self.games.lock().unwrap_or_else(|p| p.into_inner()).add(stats);
+            if let Some(sink) = sink {
+                sink.session(&record);
+            }
+        }
+        let Some(sink) = sink else { return };
         if g.held.is_empty() {
             return;
         }
@@ -884,6 +934,44 @@ impl Recorder {
             },
             in_app: self.settings.notify.in_app,
             overlay: Some(OverlayText { title, body, severity: worst }),
+        });
+    }
+
+    /// One second of the game session: only while the player is in the game.
+    fn accumulate_session(&mut self, now: Micros, dt: f32) {
+        let Some(g) = self.game.as_ref() else { return };
+        let in_game = g.away_since.is_none() || is_window_hung(g.hwnd);
+        if !in_game {
+            return;
+        }
+        let pid = g.pid;
+        let (game_cpu, game_ram) =
+            self.procs.iter().find(|p| p.pid == pid).map_or((0.0, 0.0), |p| (p.cpu_pct, p.working_set_mb));
+        let horizon = self.kring.last_idx().map_or(now, |i| (i + 1) * BUCKET_US);
+        let (mut dpc, mut isr, mut disk) = (0u32, 0u32, 0u32);
+        for b in self.kring.range(horizon - 1_000_000, horizon) {
+            dpc = dpc.max(b.dpc_max_us);
+            isr = isr.max(b.isr_max_us);
+            disk = disk.max(b.disk_lat_max_us());
+        }
+        let gpu = self.gpu.clone();
+        let ram_used = self.mem.total_mb.saturating_sub(self.mem.avail_mb) as f32;
+        let (cpu, freq_limit) = (self.cpu_total, self.freq_limit);
+        let Some(g) = self.game.as_mut() else { return };
+        let fps = g.tracker.stats(now).fps;
+        g.accum.add_active((dt as f64 * 1e6) as Micros);
+        g.accum.add_second(&TickSample {
+            cpu_pct: cpu,
+            game_cpu_pct: game_cpu,
+            game_ram_mb: game_ram,
+            freq_limit_pct: freq_limit,
+            ram_used_mb: ram_used,
+            gpu: gpu.as_ref(),
+            dpc_max_us: dpc,
+            isr_max_us: isr,
+            disk_lat_max_ms: disk as f32 / 1000.0,
+            fullscreen: g.fullscreen,
+            fps: (fps > 0.0).then_some(fps),
         });
     }
 

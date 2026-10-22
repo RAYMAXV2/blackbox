@@ -5,6 +5,7 @@ import { t } from '../i18n'
 
 const ITEMS: { id: PageId; icon: string }[] = [
   { id: 'live', icon: 'live' },
+  { id: 'games', icon: 'game' },
   { id: 'incidents', icon: 'incidents' },
   { id: 'drivers', icon: 'drivers' },
   { id: 'processes', icon: 'processes' },
