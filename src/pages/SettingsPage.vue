@@ -148,7 +148,7 @@ async function setAutostart(v: boolean) {
         <section class="card group about">
           <h2 class="label">{{ t('settings.about') }}</h2>
           <DotMatrix text="BLACKBOX" :dot="4" ghost />
-          <p class="mono ver">{{ t('settings.version', { v: system?.version ?? '0.1.0' }) }}</p>
+          <p class="mono ver">{{ t('settings.version', { v: system?.version ?? '0.2.0' }) }}</p>
           <p class="tag">{{ t('settings.tagline') }}</p>
         </section>
       </div>

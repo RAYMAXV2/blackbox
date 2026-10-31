@@ -68,7 +68,7 @@ build the live status.
 | CPU temperature | PawnIO driver (if installed) with two bundled LGPL modules: AMD SMN THM_TCON_CUR_TMP (Tctl), Intel package thermal MSR; SMN access serialized with other tools through the `Global\Access_PCI` mutex | 1 register read/s, elevated only |
 | GPU per process | NVML `nvmlDeviceGetProcessUtilization` | with the GPU polling |
 | Player activity (games) | system cursor visibility/clip, `GetLastInputInfo`, XInput (connected pads only, rescan every 15 s) | 4 calls/s during a game |
-| GPU | NVML loaded dynamically (NVIDIA only in v0.1) | every second during a game or while the dashboard is open, every 5 s otherwise |
+| GPU | NVML loaded dynamically (NVIDIA only for now) | every second during a game or while the dashboard is open, every 5 s otherwise |
 | Foreground | `SetWinEventHook(EVENT_SYSTEM_FOREGROUND)`, out of context | event-driven |
 | Memory and commit | `GlobalMemoryStatusEx` | 1 call/s |
 | Network | `GetIfTable2`, physical interfaces only | only while the dashboard is open |

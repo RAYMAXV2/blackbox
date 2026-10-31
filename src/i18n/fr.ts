@@ -95,7 +95,7 @@ const fr: Record<MessageKey, string> = {
   'hw.fan': 'Ventilo',
   'hw.vram': 'VRAM',
   'hw.noThrottle': 'Aucun bridage',
-  'hw.noGpu': 'Pas de télémétrie GPU disponible (NVIDIA uniquement en v0.1).',
+  'hw.noGpu': 'Pas de télémétrie GPU disponible (NVIDIA uniquement pour le moment).',
   'hw.disks': 'Disques',
   'hw.read': 'Lecture',
   'hw.write': 'Écriture',

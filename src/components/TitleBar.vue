@@ -10,7 +10,7 @@ import { fmtMagnitude, fmtNum, fmtPct, fmtRelative } from '../lib/format'
 
 const mode = computed(() => status.value?.mode ?? 'full')
 const overhead = computed(() => status.value?.overhead ?? null)
-const version = computed(() => system.value?.version ?? '0.1.0')
+const version = computed(() => system.value?.version ?? '0.2.0')
 
 const open = ref(false)
 const panel = ref<HTMLElement>()

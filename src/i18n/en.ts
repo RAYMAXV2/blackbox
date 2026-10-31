@@ -97,7 +97,7 @@ const en = {
   'hw.fan': 'Fan',
   'hw.vram': 'VRAM',
   'hw.noThrottle': 'Running free',
-  'hw.noGpu': 'No GPU telemetry available (NVIDIA only in v0.1).',
+  'hw.noGpu': 'No GPU telemetry available (NVIDIA only for now).',
   'hw.disks': 'Disks',
   'hw.read': 'Read',
   'hw.write': 'Write',

@@ -367,7 +367,7 @@ export interface PhaseTotals {
  * A session lasts while the game runs; time spent out of the game (alt-tab) is excluded.
  * The top-level numbers cover **gameplay seconds only** (`scope: 'gameplay'`); `all` has the
  * same numbers over every second in the game (menus and loading screens included).
- * GPU fields are null without NVML (non-NVIDIA). CPU temperature is not measured in v0.1.
+ * GPU fields are null without NVML (non-NVIDIA), CPU temperatures without PawnIO or admin rights.
  */
 export interface SessionStats {
   id: string // session id, or "avg3" for an average

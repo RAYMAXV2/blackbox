@@ -132,7 +132,7 @@ dependencies = [
 
 [[package]]
 name = "blackbox-app"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "blackbox-core",
  "blackbox-engine",
@@ -147,7 +147,7 @@ dependencies = [
 
 [[package]]
 name = "blackbox-core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -155,7 +155,7 @@ dependencies = [
 
 [[package]]
 name = "blackbox-engine"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "blackbox-core",
  "blackbox-sys",
@@ -166,7 +166,7 @@ dependencies = [
 
 [[package]]
 name = "blackbox-sys"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "blackbox-core",
  "log",

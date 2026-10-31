@@ -1002,7 +1002,7 @@ setInterval(tick, 1000)
 function systemInfo(): SystemInfo {
   const elevated = mode !== 'limited'
   return {
-    version: '0.1.0',
+    version: '0.2.0',
     os: 'Windows 11 Pro 25H2',
     build: '26200.6899',
     cpu: 'AMD Ryzen 7 9800X3D 8-Core Processor',

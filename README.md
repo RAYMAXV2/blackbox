@@ -5,7 +5,7 @@ drivers, disks, CPU, GPU and apps are doing, catches every stutter, freeze, driv
 and hang, and tells you *why* it happened — with the evidence, what it ruled out, and how to fix
 it. In English and French.
 
-> v0.1 · Windows 10/11 x64 · Rust + Tauri 2 + Vue 3
+> v0.2 · Windows 10/11 x64 · Rust + Tauri 2 + Vue 3
 
 ## What it does
 
@@ -64,6 +64,7 @@ Measured on a Ryzen 7 9800X3D + RTX 5090 (Windows 11 25H2), release build:
 | Mode | CPU (whole machine) | CPU (one core) | Memory | ETW events |
 | --- | --- | --- | --- | --- |
 | Full tracing, 46.8 s, desktop use | 0.044 % | 0.70 % | 35.5 MB peak working set | 15–27 k/s, 0 lost |
+| Full tracing + CPU temperature, 30 s, desktop use | 0.06 % | 1.0 % | 39.8 MB peak working set | ~21 k/s, 0 lost |
 | Full tracing, Overwatch at 360 fps | DPC/ISR + frames recorded | – | ~36 MB | ~35 k/s, 0 lost |
 | Limited mode, tray only, 30 s | 0.013 % | 0.21 % | 25 MB private | – |
 
@@ -136,7 +137,7 @@ To add a cause: add an entry to `crates/blackbox-core/kb/signatures.json` (EN + 
 `{placeholders}`), its id to `CAUSE_IDS` in `kb.rs`, and a rule in `analyze.rs`. Unit tests check
 that the three stay in sync.
 
-## Known limitations (v0.1)
+## Known limitations (v0.2)
 
 - GPU telemetry is NVIDIA-only (NVML); AMD/Intel GPUs show no GPU card yet.
 - Frame times come from DXGI (D3D10/11/12) and D3D9 presents. Vulkan and OpenGL games are only
@@ -144,6 +145,8 @@ that the three stay in sync.
 - CPU temperature needs the PawnIO driver and admin rights; without them it is simply absent.
 - If Blackbox is killed, its two ETW sessions keep running until the next start (which cleans
   them up) or a reboot.
+- The gameplay/menu thresholds have not been tuned on real play sessions yet: some seconds may be
+  labelled wrongly, especially in games that keep a cursor on screen.
 - Tested on one machine so far (Windows 11 25H2, Ryzen 7 9800X3D, RTX 5090).
 
 ## Roadmap
