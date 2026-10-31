@@ -1,4 +1,4 @@
-﻿//! Global health state shown at the top of the dashboard.
+//! Global health state shown at the top of the dashboard.
 
 use crate::model::{GpuThrottle, Health, Mode, Reason, Severity};
 use crate::params;
@@ -40,7 +40,10 @@ pub fn evaluate(h: &HealthInput) -> (Health, Vec<Reason>) {
         let l = if h.worst_latency_us >= 4000 { 2 } else { 1 };
         raise(
             l,
-            Reason::new("hr.dpc_high", params! {"driver" => h.worst_latency_driver.as_str(), "us" => h.worst_latency_us}),
+            Reason::new(
+                "hr.dpc_high",
+                params! {"driver" => h.worst_latency_driver.as_str(), "us" => h.worst_latency_us},
+            ),
             &mut reasons,
         );
     }
@@ -86,7 +89,8 @@ mod tests {
     fn severe_incident_is_bad_and_paused_is_idle() {
         let (h, _) = evaluate(&HealthInput { recent: vec![Severity::Severe], ..Default::default() });
         assert_eq!(h, Health::Bad);
-        let (h, r) = evaluate(&HealthInput { mode: Some(Mode::Paused), recent: vec![Severity::Severe], ..Default::default() });
+        let (h, r) =
+            evaluate(&HealthInput { mode: Some(Mode::Paused), recent: vec![Severity::Severe], ..Default::default() });
         assert_eq!((h, r[0].key.as_str()), (Health::Idle, "hr.paused"));
     }
 

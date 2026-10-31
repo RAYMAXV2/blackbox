@@ -15,7 +15,9 @@ import {
   type DriverLive,
   type GpuThrottle,
   type Incident,
+  type IncidentContext,
   type IncidentKind,
+  type ProcContext,
   type KnowledgeEntry,
   type LiveStatus,
   type Mode,
@@ -275,6 +277,8 @@ interface Gen {
   faults?: boolean
   cpu?: boolean
   dpc?: { driver: string; us: number }
+  hot?: 'cpu' | 'gpu' // what heated up
+  mem?: boolean // RAM was short
 }
 
 const app = () => GAME.name
@@ -347,8 +351,15 @@ const GENERATORS: Record<string, () => Gen> = {
     const mb = ri(300, 900)
     return {
       params: { count, mb },
-      evidence: [r('ev.hard_faults', { count }), r('ev.mem_available', { mb, pct: round((mb / 65536) * 100, 1) })],
+      evidence: [
+        r('ev.hard_faults', { count }),
+        r('ev.mem_available', { mb, pct: round((mb / 65536) * 100, 1) }),
+        r('ev.mem_top_process', { process: GAME.name, mb: ri(9800, 11200) }),
+        r('ev.mem_top_process', { process: 'chrome.exe', mb: ri(8600, 9400) }),
+        r('ev.mem_top_process', { process: 'Discord.exe', mb: ri(900, 1400) }),
+      ],
       faults: true,
+      mem: true,
       disk: true,
     }
   },
@@ -445,7 +456,12 @@ const GENERATORS: Record<string, () => Gen> = {
   },
   'cpu.throttled': () => {
     const pct = ri(55, 85)
-    return { params: { pct }, evidence: [r('ev.cpu_freq_limit', { pct })] }
+    return {
+      params: { pct },
+      evidence: [r('ev.cpu_freq_limit', { pct }), r('ev.cpu_temp', { c: ri(93, 97) }), r('ev.heat_process', { process: GAME.name, pct: ri(28, 41) })],
+      hot: 'cpu',
+      cpu: true,
+    }
   },
   'gpu.power_limit': () => {
     const reason: GpuThrottle = 'sw_power_cap'
@@ -455,7 +471,8 @@ const GENERATORS: Record<string, () => Gen> = {
     const c = ri(84, 90)
     return {
       params: { c, reason: 'sw_thermal' },
-      evidence: [r('ev.gpu_temp', { c }), r('ev.gpu_throttle', { reason: 'sw_thermal' })],
+      evidence: [r('ev.gpu_temp', { c }), r('ev.gpu_throttle', { reason: 'sw_thermal' }), r('ev.heat_gpu_process', { process: GAME.name, pct: ri(94, 99) })],
+      hot: 'gpu',
     }
   },
   'gpu.vram_full': () => {
@@ -606,6 +623,24 @@ function buildTimeline(ts: number, kind: IncidentKind, magnitudeMs: number | nul
     gpuPct.push({ t: s * 1000, v: round(atMarker && (kind === 'hitch' || kind === 'freeze') ? rr(58, 76) : rr(94, 99), 1) })
   }
 
+  // temperatures per second (only with full tracing: the CPU sensor needs admin rights)
+  const cpuTempC: { t: number; v: number }[] = []
+  const gpuTempC: { t: number; v: number }[] = []
+  if (mode !== 'limited') {
+    const ms = Math.floor(marker / 1000)
+    const cpuHot = all.some((x) => x.hot === 'cpu')
+    const gpuHot = all.some((x) => x.hot === 'gpu')
+    let c = rr(64, 72)
+    let gtemp = rr(66, 72)
+    for (let s = 0; s * 1000 < span; s++) {
+      const ramp = Math.max(0, 1 - Math.abs(s - ms) / 3)
+      c += (rr(-0.6, 0.6) + (cpuSpike && ramp > 0.5 ? 2.5 : 0)) * 0.6
+      cpuTempC.push({ t: s * 1000, v: round(cpuHot ? 72 + ramp * rr(20, 25) : c, 0) })
+      gtemp += rr(-0.3, 0.3)
+      gpuTempC.push({ t: s * 1000, v: round(gpuHot ? 74 + ramp * rr(11, 15) : gtemp, 0) })
+    }
+  }
+
   const events: TimelineEvent[] = []
   for (const x of all) {
     if (x.flag) events.push({ t: Math.max(0, marker - x.flag.dt), kind: x.flag.kind, label: x.flag.label, flagged: x === g })
@@ -616,7 +651,48 @@ function buildTimeline(ts: number, kind: IncidentKind, magnitudeMs: number | nul
   }
   events.sort((a, b) => a.t - b.t)
 
-  return { t0, t1, markerTs: ts, bucketMs, frames: out, dpcMaxUs, isrMaxUs, diskMbps, diskLatMs, hardFaults, cpuPct, gpuPct, events }
+  return { t0, t1, markerTs: ts, bucketMs, frames: out, dpcMaxUs, isrMaxUs, diskMbps, diskLatMs, hardFaults, cpuPct, gpuPct, cpuTempC, gpuTempC, events }
+}
+
+/** The machine at the second of the incident: totals and the processes using it. */
+function buildContext(tl: Timeline, g: Gen, secondary: Gen[]): IncidentContext {
+  const all = [g, ...secondary]
+  const sec = Math.floor((tl.markerTs - tl.t0) / 1000)
+  const at = (series: { t: number; v: number }[]) => series.find((p) => Math.floor(p.t / 1000) === sec)?.v ?? null
+  const mem = all.some((x) => x.mem)
+  const gpu = (lo: number, hi: number) => round(rr(lo, hi), 0)
+  const procs: ProcContext[] = [
+    { pid: GAME.pid, name: GAME.name, tag: 'game', cpuPct: round(rr(18, 31), 1), ramMb: ri(9800, 11200), ioBps: ri(2e6, 40e6), gpuPct: gpu(88, 98) },
+    { pid: 9120, name: 'chrome.exe', tag: null, cpuPct: round(rr(1.5, 4.5), 1), ramMb: mem ? ri(8600, 9400) : ri(1800, 3200), ioBps: ri(1e4, 4e5), gpuPct: gpu(1, 4) },
+    { pid: 13388, name: 'Discord.exe', tag: null, cpuPct: round(rr(0.8, 2.6), 1), ramMb: ri(900, 1400), ioBps: ri(5e3, 9e4), gpuPct: gpu(1, 3) },
+    { pid: 4412, name: 'MsMpEng.exe', tag: 'defender', cpuPct: round(rr(0.3, 1.8), 1), ramMb: ri(280, 420), ioBps: ri(1e4, 6e5), gpuPct: 0 },
+    { pid: 1688, name: 'dwm.exe', tag: null, cpuPct: round(rr(0.8, 2.2), 1), ramMb: ri(180, 320), ioBps: 0, gpuPct: gpu(3, 8) },
+    { pid: 7740, name: 'explorer.exe', tag: null, cpuPct: round(rr(0.1, 0.8), 1), ramMb: ri(180, 260), ioBps: ri(0, 2e4), gpuPct: 0 },
+    { pid: 10232, name: 'steam.exe', tag: null, cpuPct: round(rr(0.2, 1.1), 1), ramMb: ri(240, 420), ioBps: ri(0, 6e4), gpuPct: 0 },
+    { pid: 15004, name: 'obs64.exe', tag: null, cpuPct: round(rr(1.2, 3.5), 1), ramMb: ri(480, 720), ioBps: ri(1e5, 3e6), gpuPct: gpu(4, 9) },
+    { pid: 2216, name: 'Elgato.WaveLink.exe', tag: null, cpuPct: round(rr(0.4, 1.0), 1), ramMb: ri(120, 210), ioBps: 0, gpuPct: 0 },
+    { pid: 4, name: 'System', tag: null, cpuPct: round(rr(0.4, 1.6), 1), ramMb: ri(1, 8), ioBps: ri(1e4, 2e6), gpuPct: null },
+  ]
+  // the processes the causes talk about must be there, with matching numbers
+  for (const x of all) {
+    const name = x.params.process
+    if (typeof name !== 'string') continue
+    const p = procs.find((q) => q.name === name)
+    const pct = typeof x.params.pct === 'number' ? x.params.pct : ri(6, 18)
+    if (p) p.cpuPct = Math.max(p.cpuPct, pct)
+    else procs.push({ pid: ri(20000, 30000), name, tag: null, cpuPct: pct, ramMb: ri(60, 420), ioBps: x.disk ? ri(80e6, 400e6) : ri(0, 2e5), gpuPct: 0 })
+  }
+  procs.sort((a, b) => b.cpuPct - a.cpuPct)
+  const avail = mem ? ri(320, 900) : ri(28000, 40000)
+  return {
+    cpuTempC: at(tl.cpuTempC),
+    gpuTempC: at(tl.gpuTempC),
+    cpuPct: at(tl.cpuPct) ?? round(rr(25, 40), 1),
+    gpuPct: at(tl.gpuPct),
+    memAvailableMb: avail,
+    memLoadPct: round(100 - (avail / 65536) * 100, 0),
+    processes: procs.slice(0, 12),
+  }
 }
 
 const full = new Map<string, Incident>()
@@ -635,9 +711,9 @@ function pickKind(): IncidentKind {
   return 'pressure'
 }
 
-function makeIncident(ts: number, kind = pickKind()): Incident {
+function makeIncident(ts: number, kind = pickKind(), forced?: string): Incident {
   const pool = BY_KIND[kind]
-  const mainId = pick(pool)
+  const mainId = forced ?? pick(pool)
   const g = GENERATORS[mainId]()
   const others = pool.filter((id) => id !== mainId && id !== 'game.internal').sort(() => rnd() - 0.5)
   const nSec = mainId === 'game.internal' ? 0 : ri(0, 2)
@@ -651,6 +727,7 @@ function makeIncident(ts: number, kind = pickKind()): Incident {
   ]
   const magnitudeMs = kind === 'hitch' || kind === 'freeze' ? mag.value : null
   const id = `${ts.toString(36)}-${Math.floor(rnd() * 1e6).toString(36)}`
+  const timeline = buildTimeline(ts, kind, magnitudeMs, g, secGens)
   return {
     id,
     ts,
@@ -661,12 +738,13 @@ function makeIncident(ts: number, kind = pickKind()): Incident {
     causes,
     ruledOut: ruledOutFor(mainId),
     read: false,
-    timeline: buildTimeline(ts, kind, magnitudeMs, g, secGens),
+    timeline,
+    context: buildContext(timeline, g, secGens),
   }
 }
 
 function summary(i: Incident): Incident {
-  const { timeline: _omit, ...rest } = i
+  const { timeline: _t, context: _c, ...rest } = i
   return rest
 }
 
@@ -677,14 +755,17 @@ function addIncident(inc: Incident) {
 }
 
 // seed history
-for (const [ago, kind] of [
-  [7200, 'hitch'],
-  [2820, 'latency'],
-  [1560, 'hitch'],
-  [660, 'freeze'],
-  [180, 'hitch'],
+for (const [ago, kind, forced] of [
+  [7200, 'hitch', undefined],
+  [5400, 'throttle', 'gpu.thermal'],
+  [3900, 'throttle', 'cpu.throttled'],
+  [2820, 'latency', undefined],
+  [1560, 'hitch', undefined],
+  [1020, 'pressure', 'mem.paging'],
+  [660, 'freeze', undefined],
+  [180, 'hitch', undefined],
 ] as const) {
-  const inc = makeIncident(START - ago * 1000, kind)
+  const inc = makeIncident(START - ago * 1000, kind, forced)
   inc.read = ago > 1000
   addIncident(inc)
 }
@@ -838,6 +919,7 @@ function tick() {
       perCore,
       freqLimitPct: 100,
       throttled: false,
+      tempC: tracing ? round(Math.min(95, 52 + totalPct * 0.55 + gauss() * 1.5), 0) : null,
       processes: 312,
       threads: 4381 + ri(-20, 20),
     },
@@ -940,6 +1022,9 @@ function systemInfo(): SystemInfo {
       { id: 'chk.hags', state: 'ok', params: { enabled: 'yes' } },
       { id: 'chk.vbs', state: 'warn', params: { hvci: 'yes' } },
       { id: 'chk.timer_resolution', state: 'info', params: { currentMs: 1, minMs: 0.5, maxMs: 15.625 } },
+      elevated
+        ? { id: 'chk.cpu_temp', state: 'ok', params: { reason: 'ok', c: last?.cpu.tempC ?? 68 } }
+        : { id: 'chk.cpu_temp', state: 'warn', params: { reason: 'not_elevated' } },
       { id: 'chk.nvml', state: 'ok', params: { available: 'yes' } },
     ],
   }

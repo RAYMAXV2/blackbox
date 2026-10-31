@@ -1,4 +1,4 @@
-﻿// No console window in release builds.
+// No console window in release builds.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod autostart;
@@ -61,7 +61,9 @@ pub fn show_main(app: &AppHandle) {
 }
 
 fn on_window_event(window: &Window, event: &WindowEvent) {
-    let Some(state) = window.app_handle().try_state::<AppState>() else { return };
+    let Some(state) = window.app_handle().try_state::<AppState>() else {
+        return;
+    };
     match event {
         WindowEvent::Focused(f) => state.sink.window_focused.store(*f, Ordering::Relaxed),
         // Closing the dashboard destroys the WebView: its processes and memory go away,
@@ -158,7 +160,14 @@ fn restart_elevated(app: AppHandle) -> Result<(), String> {
     let w = |s: &str| s.encode_utf16().chain(std::iter::once(0)).collect::<Vec<u16>>();
     let (verb, file, args) = (w("runas"), w(&exe.to_string_lossy()), w("--elevated-restart"));
     let r = unsafe {
-        ShellExecuteW(std::ptr::null_mut(), verb.as_ptr(), file.as_ptr(), args.as_ptr(), std::ptr::null(), SW_SHOWNORMAL)
+        ShellExecuteW(
+            std::ptr::null_mut(),
+            verb.as_ptr(),
+            file.as_ptr(),
+            args.as_ptr(),
+            std::ptr::null(),
+            SW_SHOWNORMAL,
+        )
     };
     if r as isize > 32 {
         app.exit(0);

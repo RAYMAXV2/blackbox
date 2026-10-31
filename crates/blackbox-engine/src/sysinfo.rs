@@ -3,6 +3,7 @@
 use crate::recorder::Recorder;
 use blackbox_core::model::*;
 use blackbox_core::params;
+use blackbox_sys::cputemp::Unavailable as CpuTempUnavailable;
 use blackbox_sys::sysinfo as sys;
 
 fn yes_no(b: bool) -> &'static str {
@@ -43,7 +44,11 @@ pub(crate) fn build(r: &Recorder) -> SystemInfo {
         checks.push(check("chk.on_battery", CheckState::Warn, params! {"pct" => pct}));
     }
     let gm = sys::game_mode_enabled();
-    checks.push(check("chk.game_mode", if gm { CheckState::Ok } else { CheckState::Info }, params! {"enabled" => yes_no(gm)}));
+    checks.push(check(
+        "chk.game_mode",
+        if gm { CheckState::Ok } else { CheckState::Info },
+        params! {"enabled" => yes_no(gm)},
+    ));
     let hags = match sys::hags_enabled() {
         Some(true) => "yes",
         Some(false) => "no",
@@ -52,7 +57,11 @@ pub(crate) fn build(r: &Recorder) -> SystemInfo {
     checks.push(check("chk.hags", CheckState::Info, params! {"enabled" => hags}));
     // Memory integrity costs a few % in some games: worth knowing when it's on.
     let hvci = sys::hvci_enabled();
-    checks.push(check("chk.vbs", if hvci { CheckState::Info } else { CheckState::Ok }, params! {"hvci" => yes_no(hvci)}));
+    checks.push(check(
+        "chk.vbs",
+        if hvci { CheckState::Info } else { CheckState::Ok },
+        params! {"hvci" => yes_no(hvci)},
+    ));
     if let Some((cur, fine, coarse)) = sys::timer_resolution_ms() {
         checks.push(check(
             "chk.timer_resolution",
@@ -60,8 +69,25 @@ pub(crate) fn build(r: &Recorder) -> SystemInfo {
             params! {"currentMs" => round2(cur), "minMs" => round2(fine), "maxMs" => round2(coarse)},
         ));
     }
+    // CPU temperature needs the PawnIO driver (installed by FanControl, LibreHardwareMonitor, or on its own).
+    let (state, reason) = match (r.has_cpu_temp(), r.cpu_temp_err) {
+        (true, _) => (CheckState::Ok, "ok"),
+        (false, Some(CpuTempUnavailable::NotInstalled)) => (CheckState::Info, "not_installed"),
+        (false, Some(CpuTempUnavailable::NotElevated)) => (CheckState::Info, "not_elevated"),
+        (false, Some(CpuTempUnavailable::UnsupportedCpu)) => (CheckState::Info, "unsupported"),
+        (false, _) => (CheckState::Info, "failed"),
+    };
+    let mut p = params! {"reason" => reason};
+    if let Some(t) = r.cpu_temp_c {
+        p.insert("c".into(), ParamValue::from(t.round()));
+    }
+    checks.push(check("chk.cpu_temp", state, p));
     let nvml = r.gpu_name.is_some();
-    checks.push(check("chk.nvml", if nvml { CheckState::Ok } else { CheckState::Info }, params! {"available" => yes_no(nvml)}));
+    checks.push(check(
+        "chk.nvml",
+        if nvml { CheckState::Ok } else { CheckState::Info },
+        params! {"available" => yes_no(nvml)},
+    ));
 
     let now_ms = r.clock.now_unix_ms();
     SystemInfo {

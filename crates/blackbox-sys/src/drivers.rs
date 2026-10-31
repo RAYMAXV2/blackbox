@@ -86,7 +86,8 @@ pub struct ModuleMap {
 
 impl ModuleMap {
     pub fn new(registry: Arc<DriverRegistry>) -> ModuleMap {
-        let mut m = ModuleMap { ranges: Vec::new(), registry, buf: AlignedBuf::with_bytes(128 * 1024), available: false };
+        let mut m =
+            ModuleMap { ranges: Vec::new(), registry, buf: AlignedBuf::with_bytes(128 * 1024), available: false };
         m.refresh();
         m
     }

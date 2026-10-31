@@ -205,6 +205,8 @@ struct GameEntry {
     sessions: Vec<SessionStats>,
     total_sessions: u32,
     total_play_sec: u64,
+    /// Learned: the game hides the cursor during play (menus show it).
+    cursor_game: Option<bool>,
 }
 
 /// Per-game play sessions: `games.json`, written once per finished session.
@@ -217,7 +219,8 @@ pub struct GameStore {
 impl GameStore {
     pub fn open(data_dir: &Path) -> GameStore {
         let path = data_dir.join("games.json");
-        let games = fs::read(&path).ok().and_then(|b| serde_json::from_slice::<Vec<GameEntry>>(&b).ok()).unwrap_or_default();
+        let games =
+            fs::read(&path).ok().and_then(|b| serde_json::from_slice::<Vec<GameEntry>>(&b).ok()).unwrap_or_default();
         GameStore { path, games }
     }
 
@@ -233,8 +236,13 @@ impl GameStore {
         }
     }
 
+    /// What earlier sessions learned about this game's cursor.
+    pub fn cursor_hint(&self, name: &str) -> Option<bool> {
+        self.games.iter().find(|g| g.name.eq_ignore_ascii_case(name)).and_then(|g| g.cursor_game)
+    }
+
     /// Saves a finished session and returns the game's updated record.
-    pub fn add(&mut self, s: SessionStats) -> GameRecord {
+    pub fn add(&mut self, s: SessionStats, cursor_game: Option<bool>) -> GameRecord {
         let i = match self.games.iter().position(|g| g.name.eq_ignore_ascii_case(&s.game)) {
             Some(i) => i,
             None => {
@@ -244,7 +252,11 @@ impl GameStore {
         };
         let mut e = self.games.remove(i);
         e.total_sessions += 1;
-        e.total_play_sec += s.duration_sec;
+        // Time in the game (menus and loading included), not only gameplay.
+        e.total_play_sec += s.all.as_ref().map_or(s.duration_sec, |a| a.duration_sec);
+        if cursor_game.is_some() {
+            e.cursor_game = cursor_game;
+        }
         e.sessions.insert(0, s);
         e.sessions.truncate(SESSIONS_PER_GAME);
         self.games.insert(0, e); // most recently played first
@@ -299,18 +311,23 @@ mod tests {
         let dir = temp_dir("games");
         let mut g = GameStore::open(&dir);
         for (i, fps) in [100.0, 200.0, 300.0, 400.0].into_iter().enumerate() {
-            let rec = g.add(SessionStats {
-                id: format!("s{i}"),
-                game: "Game.exe".into(),
-                sessions: 1,
-                end_ts: i as i64,
-                duration_sec: 600,
-                fps_avg: fps,
-                ..Default::default()
-            });
+            let rec = g.add(
+                SessionStats {
+                    id: format!("s{i}"),
+                    game: "Game.exe".into(),
+                    sessions: 1,
+                    end_ts: i as i64,
+                    duration_sec: 600,
+                    fps_avg: fps,
+                    ..Default::default()
+                },
+                Some(true),
+            );
             assert_eq!(rec.total_sessions, i as u32 + 1);
         }
-        g.add(SessionStats { game: "Other.exe".into(), end_ts: 10, duration_sec: 60, ..Default::default() });
+        g.add(SessionStats { game: "Other.exe".into(), end_ts: 10, duration_sec: 60, ..Default::default() }, None);
+        assert_eq!(g.cursor_hint("GAME.exe"), Some(true));
+        assert_eq!(g.cursor_hint("Other.exe"), None);
         let recs = GameStore::open(&dir).records(None);
         assert_eq!(recs[0].name, "Other.exe", "most recently played first");
         let game = &recs[1];
@@ -352,8 +369,11 @@ mod tests {
                 hard_faults: vec![],
                 cpu_pct: vec![],
                 gpu_pct: vec![],
+                cpu_temp_c: vec![],
+                gpu_temp_c: vec![],
                 events: vec![],
             }),
+            context: None,
         }
     }
 

@@ -242,6 +242,8 @@ pub struct ProcUse {
     pub cpu_pct: f32,
     pub io_bps: f64,
     pub hard_faults: u32,
+    pub ram_mb: f32,
+    pub gpu_pct: Option<f32>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -278,6 +280,11 @@ pub struct SecondSample {
     pub gpu: Option<GpuSample>,
     pub top_cpu: Vec<ProcUse>,
     pub top_io: Vec<ProcUse>,
+    /// Biggest working sets.
+    pub top_mem: Vec<ProcUse>,
+    /// Biggest GPU users (NVIDIA only).
+    pub top_gpu: Vec<ProcUse>,
+    pub cpu_temp_c: Option<f32>,
     pub fg_pid: u32,
 }
 

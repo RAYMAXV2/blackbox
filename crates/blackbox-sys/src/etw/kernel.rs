@@ -364,7 +364,10 @@ mod tests {
 
     #[test]
     fn parses_process_image_v3_and_v4() {
-        assert_eq!(parse_process_image(&process_payload(4, "CompatTelRunner.exe"), 4).as_deref(), Some("CompatTelRunner.exe"));
+        assert_eq!(
+            parse_process_image(&process_payload(4, "CompatTelRunner.exe"), 4).as_deref(),
+            Some("CompatTelRunner.exe")
+        );
         assert_eq!(parse_process_image(&process_payload(3, "notepad.exe"), 3).as_deref(), Some("notepad.exe"));
         assert_eq!(parse_process_image(&[0u8; 20], 4), None);
     }

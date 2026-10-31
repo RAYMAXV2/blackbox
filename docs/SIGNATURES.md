@@ -27,7 +27,7 @@ Every verdict Blackbox can give. Placeholders in braces are filled with what was
 
 | Cause | Consequences | Fixes |
 | --- | --- | --- |
-| **Not enough free memory: Windows paged to disk**<br>{count} hard page faults just before the hitch: data had to come back from the page file on disk. Only {mb} MB of RAM was available.<br><sub>`mem.paging`</sub> | stutter, freeze, slow app | Close memory-hungry background apps (browsers, launchers, chat apps).<br>Lower texture quality in the game.<br>If it happens often, your workload needs more RAM. |
+| **Not enough free memory: Windows paged to disk**<br>{count} hard page faults just before the hitch: data had to come back from the page file on disk. Only {mb} MB of RAM was available: the apps holding the most memory at that moment are listed below.<br><sub>`mem.paging`</sub> | stutter, freeze, slow app | Close memory-hungry background apps (browsers, launchers, chat apps).<br>Lower texture quality in the game.<br>If it happens often, your workload needs more RAM. |
 
 ## Background processes
 
@@ -49,7 +49,7 @@ Every verdict Blackbox can give. Placeholders in braces are filled with what was
 | Cause | Consequences | Fixes |
 | --- | --- | --- |
 | **Your CPU was maxed out**<br>Total CPU usage reached {pct}% around the hitch: the game couldn't get the CPU time it needed.<br><sub>`cpu.saturated`</sub> | stutter, FPS drop, input lag | Close background apps.<br>Cap your frame rate slightly below your average to leave headroom.<br>Lower CPU-heavy settings (view distance, crowds, physics). |
-| **Your CPU was slowed down**<br>Windows reported the processor frequency capped at {pct}% of its maximum: a thermal or power limit kicked in.<br><sub>`cpu.throttled`</sub> | FPS drop, stutter | Check CPU temperatures and the cooler mounting / thermal paste.<br>Use the Balanced or High performance power plan, not Power saver.<br>On a laptop, plug in the charger. |
+| **Your CPU was slowed down**<br>Windows reported the processor frequency capped at {pct}% of its maximum: a thermal or power limit kicked in. The CPU temperature and what was loading the CPU are listed below when available.<br><sub>`cpu.throttled`</sub> | FPS drop, stutter | Check CPU temperatures and the cooler mounting / thermal paste.<br>Use the Balanced or High performance power plan, not Power saver.<br>On a laptop, plug in the charger. |
 
 ## GPU
 
@@ -93,7 +93,7 @@ Tous les verdicts que Blackbox peut donner. Les valeurs entre accolades sont rem
 
 | Cause | Conséquences | Solutions |
 | --- | --- | --- |
-| **Pas assez de mémoire libre : Windows a utilisé le fichier d'échange**<br>{count} défauts de page durs juste avant la saccade : des données ont dû être relues depuis le fichier d'échange. Il ne restait que {mb} Mo de RAM disponible.<br><sub>`mem.paging`</sub> | saccades, gel, appli lente | Ferme les applis gourmandes en mémoire en arrière-plan (navigateurs, launchers, messageries).<br>Baisse la qualité des textures dans le jeu.<br>Si ça arrive souvent, ton usage demande plus de RAM. |
+| **Pas assez de mémoire libre : Windows a utilisé le fichier d'échange**<br>{count} défauts de page durs juste avant la saccade : des données ont dû être relues depuis le fichier d'échange. Il ne restait que {mb} Mo de RAM disponible : les applis qui occupaient le plus de mémoire à ce moment sont listées ci-dessous.<br><sub>`mem.paging`</sub> | saccades, gel, appli lente | Ferme les applis gourmandes en mémoire en arrière-plan (navigateurs, launchers, messageries).<br>Baisse la qualité des textures dans le jeu.<br>Si ça arrive souvent, ton usage demande plus de RAM. |
 
 ## Processus en arrière-plan
 
@@ -115,7 +115,7 @@ Tous les verdicts que Blackbox peut donner. Les valeurs entre accolades sont rem
 | Cause | Conséquences | Solutions |
 | --- | --- | --- |
 | **Ton processeur était au maximum**<br>L'utilisation totale du CPU a atteint {pct} % autour de la saccade : le jeu n'a pas eu le temps de calcul dont il avait besoin.<br><sub>`cpu.saturated`</sub> | saccades, chute de FPS, latence des entrées | Ferme les applis en arrière-plan.<br>Limite tes FPS un peu en dessous de ta moyenne pour garder de la marge.<br>Baisse les réglages gourmands en CPU (distance d'affichage, foules, physique). |
-| **Ton processeur a été ralenti**<br>Windows a signalé une fréquence processeur limitée à {pct} % de son maximum : une limite thermique ou de puissance s'est déclenchée.<br><sub>`cpu.throttled`</sub> | chute de FPS, saccades | Vérifie les températures du CPU et le montage du ventirad / la pâte thermique.<br>Utilise le mode d'alimentation Équilibré ou Performances élevées, pas Économie d'énergie.<br>Sur un portable, branche le chargeur. |
+| **Ton processeur a été ralenti**<br>Windows a signalé une fréquence processeur limitée à {pct} % de son maximum : une limite thermique ou de puissance s'est déclenchée. La température du CPU et ce qui le faisait travailler sont listés ci-dessous quand ils sont disponibles.<br><sub>`cpu.throttled`</sub> | chute de FPS, saccades | Vérifie les températures du CPU et le montage du ventirad / la pâte thermique.<br>Utilise le mode d'alimentation Équilibré ou Performances élevées, pas Économie d'énergie.<br>Sur un portable, branche le chargeur. |
 
 ## Carte graphique
 

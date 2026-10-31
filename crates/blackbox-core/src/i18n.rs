@@ -38,14 +38,10 @@ pub fn incident_notification(kb: &Kb, incident: &Incident, lang: Lang) -> (Strin
         title.push_str(" · ");
         title.push_str(&app.name);
     }
-    let body = incident
-        .causes
-        .first()
-        .map(|c| kb.title(&c.id, lang, &c.params))
-        .unwrap_or_else(|| match lang {
-            Lang::En => "Open Blackbox for details".to_owned(),
-            Lang::Fr => "Ouvre Blackbox pour les détails".to_owned(),
-        });
+    let body = incident.causes.first().map(|c| kb.title(&c.id, lang, &c.params)).unwrap_or_else(|| match lang {
+        Lang::En => "Open Blackbox for details".to_owned(),
+        Lang::Fr => "Ouvre Blackbox pour les détails".to_owned(),
+    });
     (title, body)
 }
 
@@ -53,11 +49,17 @@ pub fn session_summary(app: &str, hitches: u32, minutes: u64, lang: Lang) -> (St
     match lang {
         Lang::En => (
             format!("Session ended · {app}"),
-            format!("{hitches} stutter{} in {minutes} min. Open Blackbox to see why.", if hitches == 1 { "" } else { "s" }),
+            format!(
+                "{hitches} stutter{} in {minutes} min. Open Blackbox to see why.",
+                if hitches == 1 { "" } else { "s" }
+            ),
         ),
         Lang::Fr => (
             format!("Session terminée · {app}"),
-            format!("{hitches} saccade{} en {minutes} min. Ouvre Blackbox pour voir pourquoi.", if hitches > 1 { "s" } else { "" }),
+            format!(
+                "{hitches} saccade{} en {minutes} min. Ouvre Blackbox pour voir pourquoi.",
+                if hitches > 1 { "s" } else { "" }
+            ),
         ),
     }
 }
@@ -65,7 +67,9 @@ pub fn session_summary(app: &str, hitches: u32, minutes: u64, lang: Lang) -> (St
 pub fn test_notification(lang: Lang) -> (String, String) {
     match lang {
         Lang::En => ("Blackbox".to_owned(), "Notifications work. This is what an alert looks like.".to_owned()),
-        Lang::Fr => ("Blackbox".to_owned(), "Les notifications fonctionnent. Voilà à quoi ressemble une alerte.".to_owned()),
+        Lang::Fr => {
+            ("Blackbox".to_owned(), "Les notifications fonctionnent. Voilà à quoi ressemble une alerte.".to_owned())
+        }
     }
 }
 
@@ -86,7 +90,12 @@ pub fn tray_tooltip(recording: bool, unread: u32, lang: Lang) -> String {
 
 pub fn tray_menu(lang: Lang) -> TrayLabels {
     match lang {
-        Lang::En => TrayLabels { open: "Open dashboard", pause: "Pause recording", resume: "Resume recording", quit: "Quit Blackbox" },
+        Lang::En => TrayLabels {
+            open: "Open dashboard",
+            pause: "Pause recording",
+            resume: "Resume recording",
+            quit: "Quit Blackbox",
+        },
         Lang::Fr => TrayLabels {
             open: "Ouvrir le tableau de bord",
             pause: "Mettre en pause",

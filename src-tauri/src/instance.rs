@@ -4,9 +4,13 @@
 
 use std::time::{Duration, Instant};
 use windows_sys::Win32::Foundation::{CloseHandle, GetLastError, LocalFree, ERROR_ALREADY_EXISTS, HANDLE};
-use windows_sys::Win32::Security::Authorization::{ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1};
+use windows_sys::Win32::Security::Authorization::{
+    ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1,
+};
 use windows_sys::Win32::Security::{PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES};
-use windows_sys::Win32::System::Threading::{CreateEventW, CreateMutexW, OpenEventW, SetEvent, WaitForSingleObject, EVENT_MODIFY_STATE, INFINITE};
+use windows_sys::Win32::System::Threading::{
+    CreateEventW, CreateMutexW, OpenEventW, SetEvent, WaitForSingleObject, EVENT_MODIFY_STATE, INFINITE,
+};
 
 const MUTEX_NAME: &str = "Local\\Blackbox.Instance";
 const SHOW_EVENT: &str = "Local\\Blackbox.Show";
@@ -26,7 +30,12 @@ impl Sa {
     fn new() -> Option<Sa> {
         let mut sd: PSECURITY_DESCRIPTOR = std::ptr::null_mut();
         let ok = unsafe {
-            ConvertStringSecurityDescriptorToSecurityDescriptorW(wide(SDDL).as_ptr(), SDDL_REVISION_1, &mut sd, std::ptr::null_mut())
+            ConvertStringSecurityDescriptorToSecurityDescriptorW(
+                wide(SDDL).as_ptr(),
+                SDDL_REVISION_1,
+                &mut sd,
+                std::ptr::null_mut(),
+            )
         };
         if ok == 0 {
             return None;

@@ -3,10 +3,18 @@ import { computed } from 'vue'
 import Led from '../components/Led.vue'
 import DotMatrix from '../components/DotMatrix.vue'
 import { now, system } from '../store'
-import { t } from '../i18n'
+import { has, t } from '../i18n'
 import { fmtDateTime, fmtDuration, fmtMb, fmtNum } from '../lib/format'
+import type { HealthCheck } from '../lib/contract'
 
 const s = computed(() => system.value)
+
+/** Checks with a `reason` param (e.g. chk.cpu_temp) get one string per reason; others one per state. */
+function checkKey(c: HealthCheck): string {
+  const reason = c.params.reason
+  if (typeof reason === 'string' && has(`${c.id}.${reason}`)) return `${c.id}.${reason}`
+  return `${c.id}.${c.state}`
+}
 const rows = computed(() => {
   const x = s.value
   if (!x) return []
@@ -53,7 +61,7 @@ const rows = computed(() => {
             <Led :state="c.state === 'ok' ? 'ok' : c.state === 'warn' ? 'warn' : 'info'" :size="8" />
             <div>
               <div class="ttl">{{ t(c.id) }}</div>
-              <div class="msg">{{ t(`${c.id}.${c.state}`, c.params) }}</div>
+              <div class="msg">{{ t(checkKey(c), c.params) }}</div>
             </div>
           </li>
         </ul>

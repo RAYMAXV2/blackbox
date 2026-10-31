@@ -65,6 +65,9 @@ build the live status.
 | Processes | `NtQuerySystemInformation(SystemProcessInformation)`: CPU, I/O, memory, hard faults of every process in one call | 1 syscall/s |
 | Cores | `SystemProcessorPerformanceInformation`: busy, kernel, DPC and interrupt time | 1 syscall/s |
 | CPU throttling | `CallNtPowerInformation(ProcessorInformation)` `MhzLimit / MaxMhz` | 1 call/s |
+| CPU temperature | PawnIO driver (if installed) with two bundled LGPL modules: AMD SMN THM_TCON_CUR_TMP (Tctl), Intel package thermal MSR; SMN access serialized with other tools through the `Global\Access_PCI` mutex | 1 register read/s, elevated only |
+| GPU per process | NVML `nvmlDeviceGetProcessUtilization` | with the GPU polling |
+| Player activity (games) | system cursor visibility/clip, `GetLastInputInfo`, XInput (connected pads only, rescan every 15 s) | 4 calls/s during a game |
 | GPU | NVML loaded dynamically (NVIDIA only in v0.1) | every second during a game or while the dashboard is open, every 5 s otherwise |
 | Foreground | `SetWinEventHook(EVENT_SYSTEM_FOREGROUND)`, out of context | event-driven |
 | Memory and commit | `GlobalMemoryStatusEx` | 1 call/s |
@@ -108,6 +111,14 @@ the engine notices within 5 s and restarts tracing.
 
 ## Play sessions (Games tab)
 
+Every second of a session is labelled once its frames have arrived (`activity.rs`):
+**away** (game not in front), **loading** (no frames / under 15 fps for 2 s, or heavy disk
+reads while barely rendering or while the player waits), **menu** (cursor visible in a game that
+hides it during play — learned per game and remembered — or no keyboard/mouse/controller input
+for 5 s, two seconds in a row), otherwise **gameplay**. The headline numbers use gameplay seconds
+only; an "everything" view and the time breakdown (with loading screen count and durations) are
+kept alongside.
+
 A session lasts while the game runs: alt-tabs don't split it (the time away is excluded), and it
 ends after 5 minutes out of the game, when the game exits, or when Blackbox pauses or quits.
 Sessions shorter than 60 s of play are not kept. Statistics use fixed memory however long you
@@ -134,7 +145,10 @@ baseline, and scores every rule with an explicit confidence:
 | GPU | NVML throttle reasons, VRAM | `gpu.thermal`, `gpu.power_limit`, `gpu.vram_full` |
 | Nothing external | everything above came back clean | `game.internal` |
 
-What each rule saw becomes `evidence`; what came back clean becomes `ruledOut`. The texts
+What each rule saw becomes `evidence`; what came back clean becomes `ruledOut`. Memory causes
+list the three biggest RAM users; CPU throttling adds the CPU temperature and the biggest CPU
+users; GPU limits add the biggest GPU users. Every incident also keeps a `context`: temperatures,
+memory load and up to 12 processes (CPU, RAM, disk, GPU) at that second. The texts
 (cause → consequence → fixes, EN/FR) live in `crates/blackbox-core/kb/signatures.json`, the
 single source used by the UI and the native overlay. A unit test keeps that file and the
 analyzer's cause ids in sync and checks that every French text has the same placeholders as the

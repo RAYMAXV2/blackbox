@@ -1,8 +1,10 @@
 // Browser-only simulation of the per-game session history (Games tab).
 // Averages follow the engine's rules: duration-weighted means, max of maxima,
 // min of minima, sums of counts, hitches per hour = total hitches / total hours.
+// Every session has a gameplay view (top level) and an "everything" view (`all`,
+// menus and loading screens included); both share the same phase totals.
 
-import type { GameRecord, SessionStats } from './contract'
+import type { GameRecord, PhaseTotals, SessionStats } from './contract'
 
 let seed = 0x2545f491
 function rnd(): number {
@@ -35,9 +37,16 @@ interface Profile {
   gameCpu: number
   ram: number
   gameRam: number
+  cpuTemp: number
   disk: number
   sessions: number
   minutes: [number, number]
+  // where the time goes
+  gameplay: [number, number] // share of the session spent playing
+  away: [number, number] // share spent alt-tabbed
+  loadingsH: number // loading screens per hour
+  loadingSec: [number, number] // duration of one loading screen
+  menuFps: number // FPS multiplier in menus
 }
 
 const PROFILES: Profile[] = [
@@ -60,9 +69,15 @@ const PROFILES: Profile[] = [
     gameCpu: 26,
     ram: 22400,
     gameRam: 9800,
+    cpuTemp: 74,
     disk: 18,
     sessions: 6,
     minutes: [40, 150],
+    gameplay: [0.8, 0.88],
+    away: [0.01, 0.04],
+    loadingsH: 4,
+    loadingSec: [15, 25],
+    menuFps: 1.45,
   },
   {
     name: 'Overwatch.exe',
@@ -83,9 +98,15 @@ const PROFILES: Profile[] = [
     gameCpu: 15,
     ram: 18100,
     gameRam: 3100,
+    cpuTemp: 68,
     disk: 4,
     sessions: 8,
     minutes: [25, 120],
+    gameplay: [0.76, 0.84],
+    away: [0.02, 0.05],
+    loadingsH: 12,
+    loadingSec: [6, 12],
+    menuFps: 1.2,
   },
   {
     name: 'RocketLeague.exe',
@@ -107,9 +128,15 @@ const PROFILES: Profile[] = [
     gameCpu: 7,
     ram: 16800,
     gameRam: 2300,
+    cpuTemp: 61,
     disk: 3,
     sessions: 5,
     minutes: [15, 70],
+    gameplay: [0.66, 0.74],
+    away: [0.02, 0.06],
+    loadingsH: 9,
+    loadingSec: [4, 8],
+    menuFps: 1,
   },
   {
     name: 'VALORANT-Win64-Shipping.exe',
@@ -130,15 +157,43 @@ const PROFILES: Profile[] = [
     gameCpu: 22,
     ram: 17600,
     gameRam: 2900,
+    cpuTemp: 71,
     disk: 5,
     sessions: 4,
     minutes: [30, 110],
+    gameplay: [0.74, 0.82],
+    away: [0.02, 0.05],
+    loadingsH: 7,
+    loadingSec: [8, 14],
+    menuFps: 1.15,
   },
 ]
 
 const profileOf = (name: string) => PROFILES.find((p) => p.name === name)
 
-function session(p: Profile, startTs: number, durationSec: number, id: string): SessionStats {
+const ZERO_PHASES: PhaseTotals = { gameplaySec: 0, menuSec: 0, loadingSec: 0, awaySec: 0, loadings: 0, loadingAvgSec: 0, loadingMaxSec: 0 }
+
+/** Splits a session (seconds the game ran) into gameplay / menus / loading / away. */
+function phasesFor(p: Profile, totalSec: number): PhaseTotals {
+  const away = Math.round(totalSec * rr(...p.away))
+  const loadings = Math.max(0, Math.round((p.loadingsH * totalSec) / 3600 * rr(0.8, 1.25)))
+  const durations = Array.from({ length: loadings }, () => rr(...p.loadingSec))
+  const loading = Math.round(durations.reduce((a, b) => a + b, 0))
+  const gameplay = Math.min(Math.round(totalSec * rr(...p.gameplay)), Math.max(0, totalSec - away - loading))
+  const menu = Math.max(0, Math.round(totalSec) - away - loading - gameplay)
+  return {
+    gameplaySec: gameplay,
+    menuSec: menu,
+    loadingSec: loading,
+    awaySec: away,
+    loadings,
+    loadingAvgSec: loadings ? round(loading / loadings, 1) : 0,
+    loadingMaxSec: loadings ? round(Math.max(...durations), 1) : 0,
+  }
+}
+
+/** Gameplay view: only the seconds actually played. */
+function gameplayStats(p: Profile, startTs: number, endTs: number, durationSec: number, id: string, phases: PhaseTotals): SessionStats {
   const hours = durationSec / 3600
   let fps = p.fps * rr(0.95, 1.05)
   if (p.cap) fps = Math.min(fps, p.cap - rr(0.5, 2.5))
@@ -168,8 +223,11 @@ function session(p: Profile, startTs: number, durationSec: number, id: string): 
     id,
     game: p.name,
     sessions: 1,
+    scope: 'gameplay',
+    phases,
+    all: null,
     startTs,
-    endTs: startTs + durationSec * 1000,
+    endTs,
     durationSec: Math.round(durationSec),
     fullTracing: true,
     frames: Math.round(fps * durationSec),
@@ -197,6 +255,8 @@ function session(p: Profile, startTs: number, durationSec: number, id: string): 
     ramUsedAvgMb: Math.round(ram),
     ramUsedMaxMb: Math.round(ram + rr(400, 1600)),
     gameRamMaxMb: Math.round(p.gameRam * rr(0.95, 1.08)),
+    cpuTempAvgC: round(p.cpuTemp + rr(-2, 2), 1),
+    cpuTempMaxC: Math.round(p.cpuTemp + rr(7, 13)),
     gpuUtilAvgPct: round(gpuUtil, 1),
     gpuUtilMaxPct: Math.min(100, Math.round(gpuUtil + rr(4, 14))),
     gpuTempAvgC: round(gpuTemp, 1),
@@ -215,20 +275,105 @@ function session(p: Profile, startTs: number, durationSec: number, id: string): 
   }
 }
 
+/** "Everything" view: menus (often faster) and loading screens (slow, hitchy) blended in. */
+function everythingStats(p: Profile, gp: SessionStats): SessionStats {
+  const ph = gp.phases
+  const dur = ph.gameplaySec + ph.menuSec + ph.loadingSec
+  if (dur <= 0) return { ...gp, scope: 'all', all: null }
+  let menuFps = gp.fpsAvg * p.menuFps
+  if (p.cap) menuFps = Math.min(menuFps, p.cap)
+  const loadFps = rr(25, 60)
+  const fps = (ph.gameplaySec * gp.fpsAvg + ph.menuSec * menuFps + ph.loadingSec * loadFps) / dur
+  const ft = 1000 / fps
+  const extraHitches = Math.round(ph.loadings * rr(1, 2.5))
+  const extraFreezes = Math.round(ph.loadings * rr(0.05, 0.2))
+  const hitches = gp.hitches + extraHitches
+  const loadingCause = p.name.startsWith('Cyberpunk') ? 'io.game_streaming' : p.causes[0]
+  const topCauses = gp.topCauses.map((c) => ({ ...c }))
+  const extraIncidents = Math.round(ph.loadings * 0.3)
+  if (extraIncidents) {
+    const hit = topCauses.find((c) => c.id === loadingCause)
+    if (hit) hit.count += extraIncidents
+    else topCauses.push({ id: loadingCause, count: extraIncidents })
+    topCauses.sort((a, b) => b.count - a.count)
+  }
+  const nonGame = (ph.menuSec + ph.loadingSec) / dur
+  const blend = (v: number | null, f: number) => (v === null ? null : round(v * (1 - nonGame) + v * f * nonGame, 1))
+  return {
+    ...gp,
+    scope: 'all',
+    all: null,
+    durationSec: Math.round(dur),
+    frames: Math.round(fps * dur),
+    fpsAvg: round(fps, 1),
+    fpsMin1s: round(Math.min(gp.fpsMin1s, loadFps), 1),
+    fpsMax1s: round(Math.max(gp.fpsMax1s, p.cap ? p.cap + rr(0, 1.5) : menuFps * rr(1.05, 1.12)), 1),
+    frameTimeAvgMs: round(ft, 2),
+    frameTimeP50Ms: round(ft * rr(0.95, 0.99), 2),
+    frameTimeP95Ms: round(ft * rr(1.3, 1.45), 2),
+    frameTimeP99Ms: round(ft * rr(1.9, 2.4), 2),
+    low1Fps: round(gp.low1Fps * rr(0.78, 0.88), 1),
+    low01Fps: round(gp.low01Fps * rr(0.5, 0.65), 1),
+    hitches,
+    hitchesMinor: gp.hitchesMinor + Math.round(extraHitches * 0.4),
+    hitchesMajor: gp.hitchesMajor + Math.round(extraHitches * 0.5),
+    hitchesSevere: gp.hitchesSevere + (extraHitches - Math.round(extraHitches * 0.4) - Math.round(extraHitches * 0.5)),
+    freezes: gp.freezes + extraFreezes,
+    hitchesPerHour: round(hitches / Math.max(dur / 3600, 1 / 60), 1),
+    incidents: gp.incidents + extraIncidents,
+    topCauses: topCauses.slice(0, 5),
+    cpuAvgPct: round(gp.cpuAvgPct * rr(0.9, 0.97), 1),
+    gameCpuAvgPct: round(gp.gameCpuAvgPct * rr(0.85, 0.95), 1),
+    gpuUtilAvgPct: blend(gp.gpuUtilAvgPct, 0.7),
+    gpuTempAvgC: gp.gpuTempAvgC === null ? null : round(gp.gpuTempAvgC - rr(0.5, 2), 1),
+    cpuTempAvgC: gp.cpuTempAvgC === null ? null : round(gp.cpuTempAvgC - rr(0.5, 2.5), 1),
+    gpuPowerAvgW: blend(gp.gpuPowerAvgW, 0.65),
+    gpuClockAvgMhz: gp.gpuClockAvgMhz,
+    vramAvgMb: gp.vramAvgMb,
+    gpuThrottlePct: blend(gp.gpuThrottlePct, 0.4),
+    diskLatMaxMs: round(Math.max(gp.diskLatMaxMs, p.disk * rr(1.5, 3)), 1),
+  }
+}
+
+/** One finished (or live) session: the game ran `totalSec` seconds from `startTs`. */
+function session(p: Profile, startTs: number, totalSec: number, id: string): SessionStats {
+  const phases = phasesFor(p, totalSec)
+  const gp = gameplayStats(p, startTs, startTs + totalSec * 1000, Math.max(1, phases.gameplaySec), id, phases)
+  return { ...gp, all: everythingStats(p, gp) }
+}
+
+/** A record saved before phases existed: gameplay numbers only, no `all`. */
+function legacySession(p: Profile, startTs: number, totalSec: number, id: string): SessionStats {
+  return { ...gameplayStats(p, startTs, startTs + totalSec * 1000, totalSec, id, { ...ZERO_PHASES }), cpuTempAvgC: null, cpuTempMaxC: null }
+}
+
 type Num = number | null
 const AVG_KEYS = [
   'fpsAvg', 'frameTimeAvgMs', 'frameTimeP50Ms', 'frameTimeP95Ms', 'frameTimeP99Ms', 'low1Fps', 'low01Fps',
   'cpuAvgPct', 'gameCpuAvgPct', 'ramUsedAvgMb', 'gpuUtilAvgPct', 'gpuTempAvgC', 'gpuPowerAvgW', 'gpuClockAvgMhz',
-  'gpuFanAvgPct', 'vramAvgMb', 'gpuThrottlePct', 'fullscreenPct',
+  'gpuFanAvgPct', 'vramAvgMb', 'gpuThrottlePct', 'fullscreenPct', 'cpuTempAvgC',
 ] as const
-const MAX_KEYS = ['fpsMax1s', 'cpuMaxPct', 'ramUsedMaxMb', 'gameRamMaxMb', 'gpuUtilMaxPct', 'gpuTempMaxC', 'gpuPowerMaxW', 'vramMaxMb', 'dpcMaxUs', 'isrMaxUs', 'diskLatMaxMs'] as const
+const MAX_KEYS = ['fpsMax1s', 'cpuMaxPct', 'ramUsedMaxMb', 'gameRamMaxMb', 'gpuUtilMaxPct', 'gpuTempMaxC', 'gpuPowerMaxW', 'vramMaxMb', 'dpcMaxUs', 'isrMaxUs', 'diskLatMaxMs', 'cpuTempMaxC'] as const
 const MIN_KEYS = ['fpsMin1s', 'cpuFreqLimitMinPct'] as const
 const SUM_KEYS = ['frames', 'durationSec', 'hitches', 'hitchesMinor', 'hitchesMajor', 'hitchesSevere', 'freezes', 'incidents'] as const
 
-/** Duration-weighted average of sessions (same rules as the engine). */
-export function average(list: SessionStats[]): SessionStats | null {
-  if (!list.length) return null
-  const out = structuredClone(list[0]) as SessionStats & Record<string, unknown>
+function sumPhases(list: PhaseTotals[]): PhaseTotals {
+  const out = { ...ZERO_PHASES }
+  for (const p of list) {
+    out.gameplaySec += p.gameplaySec
+    out.menuSec += p.menuSec
+    out.loadingSec += p.loadingSec
+    out.awaySec += p.awaySec
+    out.loadings += p.loadings
+    out.loadingMaxSec = Math.max(out.loadingMaxSec, p.loadingMaxSec)
+  }
+  out.loadingAvgSec = out.loadings ? round(out.loadingSec / out.loadings, 1) : 0
+  return out
+}
+
+/** Duration-weighted average of one view of several sessions (same rules as the engine). */
+function averageView(list: SessionStats[], scope: SessionStats['scope']): SessionStats {
+  const out = structuredClone(list[0]) as SessionStats
   const rec = out as unknown as Record<string, Num>
   const get = (s: SessionStats, k: string) => (s as unknown as Record<string, Num>)[k]
   for (const k of AVG_KEYS) {
@@ -254,10 +399,26 @@ export function average(list: SessionStats[]): SessionStats | null {
   out.hitchesPerHour = round(out.hitches / Math.max(out.durationSec / 3600, 1 / 60), 1)
   out.id = 'avg3'
   out.sessions = list.length
+  out.scope = scope
+  out.all = null
+  out.phases = sumPhases(list.map((s) => s.phases))
   out.fullTracing = list.every((s) => s.fullTracing)
   out.startTs = Math.min(...list.map((s) => s.startTs))
   out.endTs = Math.max(...list.map((s) => s.endTs))
   return out
+}
+
+/**
+ * Average of sessions, both views. Sessions without an `all` view (older records)
+ * count with their gameplay numbers in the "everything" average.
+ */
+export function average(list: SessionStats[]): SessionStats | null {
+  if (!list.length) return null
+  const gameplay = averageView(list, 'gameplay')
+  const anyAll = list.some((s) => s.all)
+  gameplay.all = anyAll ? averageView(list.map((s) => s.all ?? s), 'all') : null
+  if (gameplay.all) gameplay.all.phases = gameplay.phases
+  return gameplay
 }
 
 interface Stored {
@@ -271,6 +432,9 @@ const DAY = 86_400_000
 let liveStart = Date.now() - 1834 * 1000
 let nextId = 1
 
+/** Seconds actually spent in the game (menus and loading included, away excluded). */
+const inGameSec = (s: SessionStats) => s.all?.durationSec ?? s.durationSec
+
 if (new URLSearchParams(location.search).get('games') !== '0') {
   for (const p of PROFILES) {
     const list: SessionStats[] = []
@@ -278,14 +442,16 @@ if (new URLSearchParams(location.search).get('games') !== '0') {
     for (let i = 0; i < p.sessions; i++) {
       const dur = rr(p.minutes[0], p.minutes[1]) * 60
       const start = t - dur * 1000
-      list.push(session(p, start, dur, `s${nextId++}`))
+      // Overwatch's oldest session predates phase tracking: exercises the fallback.
+      const legacy = p.name === 'Overwatch.exe' && i === p.sessions - 1
+      list.push((legacy ? legacySession : session)(p, start, dur, `s${nextId++}`))
       t = start - rr(0.6, 2.6) * DAY
     }
     const extra = ri(0, 9)
     stored.set(p.name, {
       sessions: list,
       totalSessions: list.length + extra,
-      totalPlaySec: list.reduce((a, s) => a + s.durationSec, 0) + extra * ri(1800, 4200),
+      totalPlaySec: list.reduce((a, s) => a + inGameSec(s), 0) + extra * ri(1800, 4200),
     })
   }
 }
@@ -298,7 +464,7 @@ function record(name: string, s: Stored | undefined, live: SessionStats | null):
     last3: average(sessions.slice(0, 3)),
     live,
     totalSessions: s?.totalSessions ?? 0,
-    totalPlaySec: (s?.totalPlaySec ?? 0) + (live?.durationSec ?? 0),
+    totalPlaySec: (s?.totalPlaySec ?? 0) + (live ? inGameSec(live) : 0),
     lastPlayedTs: live ? Date.now() : (sessions[0]?.endTs ?? 0),
   }
 }
@@ -328,7 +494,7 @@ export function endLiveSession(liveGame: string): GameRecord | null {
   const s = stored.get(p.name) ?? { sessions: [], totalSessions: 0, totalPlaySec: 0 }
   s.sessions = [done, ...s.sessions].slice(0, 20)
   s.totalSessions += 1
-  s.totalPlaySec += done.durationSec
+  s.totalPlaySec += inGameSec(done)
   stored.set(p.name, s)
   liveStart = now
   return record(p.name, s, null)

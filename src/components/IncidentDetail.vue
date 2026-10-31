@@ -3,6 +3,7 @@ import { computed, onMounted, ref, shallowRef } from 'vue'
 import DotMatrix from './DotMatrix.vue'
 import Icon from './Icon.vue'
 import TimelineChart from './TimelineChart.vue'
+import IncidentContextPanel from './IncidentContext.vue'
 import { causeExplain, causeFixes, causeTitle, deleteIncident, incidents, kbEntry, markRead } from '../store'
 import { call } from '../lib/ipc'
 import type { CauseMatch, Incident } from '../lib/contract'
@@ -92,6 +93,11 @@ async function exportJson() {
     <section v-if="inc.timeline" class="card block">
       <div class="block-head"><span class="label">{{ t('incident.timeline') }}</span></div>
       <TimelineChart :tl="inc.timeline" />
+    </section>
+
+    <section v-if="inc.context" class="card block">
+      <div class="block-head"><span class="label">{{ t('incident.context') }}</span></div>
+      <IncidentContextPanel :ctx="inc.context" :kind="inc.kind" :verdict="verdict" />
     </section>
 
     <section class="two">

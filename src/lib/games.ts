@@ -1,7 +1,65 @@
 // Helpers for the Games tab: readable game names, cause labels without
-// per-incident params, and "better / worse than the average" tones.
+// per-incident params, "better / worse than the average" tones, and the
+// in-game / everything view switch.
+import { ref, watch } from 'vue'
 import { kbEntry } from '../store'
 import { fill, lk, t } from '../i18n'
+import type { PhaseTotals, SessionStats } from './contract'
+
+// ── view scope: gameplay seconds only (default) or every second in the game ──
+
+const SCOPE_KEY = 'blackbox.games.scope'
+const HINT_KEY = 'blackbox.games.scopeHintSeen'
+
+function readStore(key: string): string | null {
+  try {
+    return localStorage.getItem(key)
+  } catch {
+    return null
+  }
+}
+
+function writeStore(key: string, value: string) {
+  try {
+    localStorage.setItem(key, value)
+  } catch {
+    /* storage unavailable: the choice just won't be remembered */
+  }
+}
+
+export type Scope = 'gameplay' | 'all'
+export const scope = ref<Scope>(readStore(SCOPE_KEY) === 'all' ? 'all' : 'gameplay')
+watch(scope, (s) => writeStore(SCOPE_KEY, s))
+
+/** The one-line explanation under the toggle shows until the toggle is used or dismissed. */
+export const scopeHintSeen = ref(readStore(HINT_KEY) === '1')
+export function dismissScopeHint() {
+  scopeHintSeen.value = true
+  writeStore(HINT_KEY, '1')
+}
+
+/** Stats for the current scope. Records saved before the "everything" view existed fall back to gameplay. */
+export function view(s: SessionStats): SessionStats
+export function view(s: SessionStats | null): SessionStats | null
+export function view(s: SessionStats | null): SessionStats | null {
+  if (!s) return null
+  return scope.value === 'all' && s.all ? s.all : s
+}
+
+/** True when this stat set has no "everything" view (older record) while that view is selected. */
+export function missingAll(s: SessionStats | null): boolean {
+  return scope.value === 'all' && !!s && !s.all
+}
+
+export function phaseTotal(p: PhaseTotals | null | undefined): number {
+  return p ? p.gameplaySec + p.menuSec + p.loadingSec + p.awaySec : 0
+}
+
+/** Share of the session spent actually playing, 0..100, or null when phases weren't recorded. */
+export function gameplayPct(p: PhaseTotals | null | undefined): number | null {
+  const total = phaseTotal(p)
+  return total > 0 && p ? (p.gameplaySec / total) * 100 : null
+}
 
 const SUFFIXES = [/-win64-shipping$/i, /-win64$/i, /_win64$/i, /-shipping$/i, /_x64$/i, /x64$/i, /_dx1[12]$/i, /_be$/i]
 

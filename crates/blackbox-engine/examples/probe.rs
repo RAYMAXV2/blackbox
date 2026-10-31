@@ -1,4 +1,4 @@
-﻿//! Headless run of the engine, for testing and measuring overhead.
+//! Headless run of the engine, for testing and measuring overhead.
 //!
 //! cargo run --release -p blackbox-engine --example probe -- 30
 //! (run from an elevated terminal for full kernel tracing)
@@ -12,12 +12,16 @@ fn main() {
     struct PrintSink;
     impl EngineSink for PrintSink {
         fn status(&self, s: &LiveStatus) {
-            let game = s.game.as_ref().map(|g| format!(" game={} {:.0}fps p99={:.1}ms hitches={}", g.name, g.fps, g.p99_ms, g.hitches));
+            let game = s
+                .game
+                .as_ref()
+                .map(|g| format!(" game={} {:.0}fps p99={:.1}ms hitches={}", g.name, g.fps, g.p99_ms, g.hitches));
             println!(
-                "[status] mode={:?} health={:?} cpu={:.0}% mem={}MB dpc/s={} dpcmax={}us isrmax={}us hf/s={} disks={} drivers={} self={:.2}%cpu {:.1}MB ev/s={} lost={}{}",
+                "[status] mode={:?} health={:?} cpu={:.0}% cpu_temp={:?} mem={}MB dpc/s={} dpcmax={}us isrmax={}us hf/s={} disks={} drivers={} self={:.2}%cpu {:.1}MB ev/s={} lost={}{}",
                 s.mode,
                 s.health,
                 s.cpu.total_pct,
+                s.cpu.temp_c,
                 s.memory.used_mb,
                 s.kernel.dpc_per_sec,
                 s.kernel.dpc_max_us,
@@ -59,19 +63,32 @@ fn main() {
 
     let secs: u64 = std::env::args().nth(1).and_then(|a| a.parse().ok()).unwrap_or(20);
     let dir = std::env::temp_dir().join("blackbox-probe");
-    let engine = Engine::start(EngineConfig { data_dir: dir, version: env!("CARGO_PKG_VERSION").into() }, Arc::new(PrintSink));
+    let engine =
+        Engine::start(EngineConfig { data_dir: dir, version: env!("CARGO_PKG_VERSION").into() }, Arc::new(PrintSink));
     engine.set_ui_active(true);
     std::thread::sleep(std::time::Duration::from_secs(secs));
 
     let boot = engine.bootstrap();
-    println!("[system] {} | {} | {} | elevated={}", boot.system.os, boot.system.cpu, boot.system.gpu.unwrap_or_default(), boot.system.elevated);
+    println!(
+        "[system] {} | {} | {} | elevated={}",
+        boot.system.os,
+        boot.system.cpu,
+        boot.system.gpu.unwrap_or_default(),
+        boot.system.elevated
+    );
     for c in &boot.system.checks {
         println!("[check] {} {:?} {:?}", c.id, c.state, c.params);
     }
     for d in engine.drivers().iter().take(12) {
         println!(
             "[driver] {:<22} {:<10?} dpc={} total={}us max={}us isr={} max={}us",
-            d.live.name, d.live.category, d.live.dpc_count, d.live.dpc_total_us, d.live.dpc_max_us, d.live.isr_count, d.live.isr_max_us
+            d.live.name,
+            d.live.category,
+            d.live.dpc_count,
+            d.live.dpc_total_us,
+            d.live.dpc_max_us,
+            d.live.isr_count,
+            d.live.isr_max_us
         );
     }
     for p in engine.processes().iter().take(5) {

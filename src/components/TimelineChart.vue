@@ -19,17 +19,23 @@ const LABEL_W = 104
 const PAD_R = 16
 const GAP = 8
 const AXIS_H = 22
-const TRACKS = [
-  { key: 'frames', h: 84 },
-  { key: 'dpc', h: 46 },
-  { key: 'disk', h: 46 },
-  { key: 'faults', h: 30 },
-  { key: 'cpugpu', h: 46 },
-  { key: 'events', h: 46 },
-] as const
-type TrackKey = (typeof TRACKS)[number]['key']
+type TrackKey = 'frames' | 'dpc' | 'disk' | 'faults' | 'cpugpu' | 'temp' | 'events'
 
-const HEIGHT = TRACKS.reduce((s, tr) => s + tr.h + GAP, 0) + AXIS_H
+// The temperature lane only exists when the engine recorded temperatures.
+const hasTemp = computed(() => props.tl.cpuTempC.length > 0 || props.tl.gpuTempC.length > 0)
+const tracks = computed(() => {
+  const list: { key: TrackKey; h: number }[] = [
+    { key: 'frames', h: 84 },
+    { key: 'dpc', h: 46 },
+    { key: 'disk', h: 46 },
+    { key: 'faults', h: 30 },
+    { key: 'cpugpu', h: 46 },
+  ]
+  if (hasTemp.value) list.push({ key: 'temp', h: 46 })
+  list.push({ key: 'events', h: 46 })
+  return list
+})
+const height = computed(() => tracks.value.reduce((s, tr) => s + tr.h + GAP, 0) + AXIS_H)
 
 const geo = shallowRef({ w: 0, plotW: 0 })
 const hover = ref<{ x: number; off: number } | null>(null)
@@ -43,7 +49,7 @@ function xOf(off: number) {
 
 function trackY(key: TrackKey) {
   let y = 0
-  for (const tr of TRACKS) {
+  for (const tr of tracks.value) {
     if (tr.key === key) return { y, h: tr.h }
     y += tr.h + GAP
   }
@@ -70,6 +76,7 @@ function drawLabel(ctx: CanvasRenderingContext2D, p: Palette, key: TrackKey, tex
 }
 
 function drawBase(w: number) {
+  const HEIGHT = height.value
   const ctx = base.value && prepare(base.value, w, HEIGHT)
   if (!ctx) return
   geo.value = { w, plotW: w - LABEL_W - PAD_R }
@@ -211,6 +218,42 @@ function drawBase(w: number) {
     step(tl.gpuPct, p.hardware)
   }
 
+  // CPU / GPU temperature per second, same tints as their load
+  if (hasTemp.value) {
+    drawLabel(ctx, p, 'temp', t('track.temp'), [p.kernel, p.hardware])
+    const { y, h } = trackY('temp')
+    const all = [...tl.cpuTempC, ...tl.gpuTempC].map((v) => v.v)
+    const lo = Math.min(30, ...all) - 2
+    const hi = Math.max(90, ...all) + 3
+    const yy = (c: number) => y + h - 3 - ((c - lo) / (hi - lo)) * (h - 8)
+    const line = (series: { t: number; v: number }[], color: string) => {
+      if (!series.length) return
+      ctx.beginPath()
+      series.forEach((pt, i) => {
+        const x = xOf(Math.min(span.value, pt.t + 500))
+        if (i === 0) ctx.moveTo(x, yy(pt.v))
+        else ctx.lineTo(x, yy(pt.v))
+      })
+      ctx.strokeStyle = color
+      ctx.lineWidth = 1.4
+      ctx.lineJoin = 'round'
+      ctx.stroke()
+      const peak = series.reduce((a, b) => (b.v > a.v ? b : a))
+      const px = xOf(Math.min(span.value, peak.t + 500))
+      ctx.fillStyle = color
+      ctx.beginPath()
+      ctx.arc(px, yy(peak.v), 2.6, 0, Math.PI * 2)
+      ctx.fill()
+      ctx.font = `10px ${p.mono}`
+      ctx.textBaseline = 'bottom'
+      ctx.textAlign = px > w - PAD_R - 60 ? 'right' : 'left'
+      ctx.fillText(`${fmtNum(peak.v)} °C`, px + (ctx.textAlign === 'right' ? -6 : 6), yy(peak.v) - 2)
+      ctx.textAlign = 'left'
+    }
+    line(tl.cpuTempC, p.kernel)
+    line(tl.gpuTempC, p.hardware)
+  }
+
   // events lane
   {
     drawLabel(ctx, p, 'events', t('track.events'))
@@ -281,6 +324,7 @@ function drawBase(w: number) {
 
 function drawOverlay() {
   const w = geo.value.w
+  const HEIGHT = height.value
   const ctx = over.value && prepare(over.value, w, HEIGHT)
   if (!ctx || !hover.value) return
   const p = palette(host.value!)
@@ -331,6 +375,14 @@ const tip = computed(() => {
   const sec = Math.floor(hv.off / 1000)
   const cpu = tl.cpuPct.find((v) => Math.floor(v.t / 1000) === sec)?.v
   const gpu = tl.gpuPct.find((v) => Math.floor(v.t / 1000) === sec)?.v
+  const cpuT = tl.cpuTempC.find((v) => Math.floor(v.t / 1000) === sec)?.v
+  const gpuT = tl.gpuTempC.find((v) => Math.floor(v.t / 1000) === sec)?.v
+  const temps: [string, string][] = hasTemp.value
+    ? [
+        [t('track.cpuTemp'), cpuT !== undefined ? `${fmtNum(cpuT)} °C` : '—'],
+        [t('track.gpuTemp'), gpuT !== undefined ? `${fmtNum(gpuT)} °C` : '—'],
+      ]
+    : []
   const rel = (hv.off - marker.value) / 1000
   return {
     left: hv.x,
@@ -343,6 +395,7 @@ const tip = computed(() => {
       [t('track.faults'), fmtNum(tl.hardFaults[bi])],
       ['CPU', cpu !== undefined ? fmtPct(cpu) : '—'],
       ['GPU', gpu !== undefined ? fmtPct(gpu) : '—'],
+      ...temps,
     ],
   }
 })
@@ -351,7 +404,7 @@ defineExpose({ redraw })
 </script>
 
 <template>
-  <div ref="host" class="tl" :style="{ height: `${HEIGHT}px` }" @mousemove="onMove" @mouseleave="onLeave">
+  <div ref="host" class="tl" :style="{ height: `${height}px` }" @mousemove="onMove" @mouseleave="onLeave">
     <canvas ref="base" class="layer" />
     <canvas ref="over" class="layer" />
     <div v-if="tip" class="tip" :class="{ flip: tip.left > geo.w - 220 }" :style="{ left: `${tip.left}px` }">

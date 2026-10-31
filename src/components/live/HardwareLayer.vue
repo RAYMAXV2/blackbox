@@ -28,6 +28,11 @@ const latTone = (ms: number) => (ms >= 20 ? 'bad' : ms >= 5 ? 'warn' : '')
       <div class="model">{{ cpu.name }}</div>
       <div class="big-row">
         <b class="big num">{{ fmtPct(cpu.totalPct) }}</b>
+        <span
+          class="temp num"
+          :class="{ hot: (cpu.tempC ?? 0) >= 90, warm: (cpu.tempC ?? 0) >= 80 && (cpu.tempC ?? 0) < 90 }"
+          :title="cpu.tempC === null ? t('hw.cpuTempNa') : t('hw.cpuTemp')"
+        >{{ cpu.tempC === null ? '— °C' : `${fmtNum(cpu.tempC)} °C` }}</span>
         <Spark class="spark" :values="history.cpu" tone="kernel" />
       </div>
       <div class="cores" :style="{ gridTemplateColumns: `repeat(${cpu.perCore.length}, 1fr)` }">
@@ -170,6 +175,19 @@ const latTone = (ms: number) => (ms >= 20 ? 'bad' : ms >= 5 ? 'warn' : '')
 }
 .spark {
   flex: 1;
+}
+.temp {
+  font-size: 15px;
+  color: var(--text-2);
+  white-space: nowrap;
+  padding-bottom: 2px;
+  cursor: help;
+}
+.temp.warm {
+  color: var(--amber);
+}
+.temp.hot {
+  color: var(--red);
 }
 .cores {
   display: grid;

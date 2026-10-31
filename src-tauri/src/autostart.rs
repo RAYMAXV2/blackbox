@@ -49,11 +49,8 @@ fn task_xml(exe: &str, user: &str) -> String {
 }
 
 fn schtasks(args: &[&str]) -> Result<(), String> {
-    let out = Command::new("schtasks.exe")
-        .args(args)
-        .creation_flags(CREATE_NO_WINDOW)
-        .output()
-        .map_err(|e| e.to_string())?;
+    let out =
+        Command::new("schtasks.exe").args(args).creation_flags(CREATE_NO_WINDOW).output().map_err(|e| e.to_string())?;
     if out.status.success() {
         Ok(())
     } else {
@@ -100,7 +97,9 @@ pub fn set(enabled: bool) -> Result<(), String> {
 
 /// The registered task runs exactly `exe --background`, elevated, and nothing else.
 fn registered_command_is(exe: &str) -> bool {
-    let Ok(out) = Command::new("schtasks.exe").args(["/Query", "/TN", TASK, "/XML"]).creation_flags(CREATE_NO_WINDOW).output() else {
+    let Ok(out) =
+        Command::new("schtasks.exe").args(["/Query", "/TN", TASK, "/XML"]).creation_flags(CREATE_NO_WINDOW).output()
+    else {
         return false;
     };
     let xml = String::from_utf8_lossy(&out.stdout);

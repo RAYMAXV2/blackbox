@@ -124,6 +124,7 @@ impl Recorder {
                 throttled: self.freq_limit < 90.0,
                 processes: self.proc_count,
                 threads: self.thread_count,
+                temp_c: self.cpu_temp_c,
             },
             memory: MemLive {
                 total_mb: self.mem.total_mb,

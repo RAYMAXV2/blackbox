@@ -1,4 +1,4 @@
-﻿//! Blackbox recorder engine.
+//! Blackbox recorder engine.
 //!
 //! One background thread ticks once per second: it drains what the ETW consumers aggregated,
 //! takes one-syscall snapshots of processes and processors, runs the detectors, and analyzes
@@ -8,6 +8,7 @@
 
 mod detect;
 mod engine;
+mod play;
 mod recorder;
 mod status;
 pub mod store;

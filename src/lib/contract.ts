@@ -57,6 +57,7 @@ export interface CpuLive {
   throttled: boolean
   processes: number
   threads: number
+  tempC: number | null // Tctl (AMD) / package (Intel); null without the PawnIO driver or admin rights
 }
 
 export interface MemLive {
@@ -214,6 +215,29 @@ export interface Incident {
   ruledOut: Reason[] // keys: ro.*
   read: boolean
   timeline?: Timeline // only present in get_incident(id)
+  context?: IncidentContext // only present in get_incident(id)
+}
+
+/** The machine at the second of the incident. */
+export interface IncidentContext {
+  cpuTempC: number | null
+  gpuTempC: number | null
+  cpuPct: number
+  gpuPct: number | null
+  memAvailableMb: number
+  memLoadPct: number
+  /** Biggest users of CPU, RAM, disk and GPU at that second (up to 12), sorted by CPU. */
+  processes: ProcContext[]
+}
+
+export interface ProcContext {
+  pid: number
+  name: string
+  tag: ProcTag | null
+  cpuPct: number // % of the whole machine
+  ramMb: number // working set
+  ioBps: number
+  gpuPct: number | null // NVIDIA only
 }
 
 export interface CauseMatch {
@@ -239,6 +263,8 @@ export interface Timeline {
   // per-second series: t = ms offset from t0
   cpuPct: { t: number; v: number }[]
   gpuPct: { t: number; v: number }[]
+  cpuTempC: { t: number; v: number }[] // empty without CPU temperature
+  gpuTempC: { t: number; v: number }[]
   events: TimelineEvent[]
 }
 
@@ -325,18 +351,34 @@ export interface Toast {
 
 // ───────────────────────────── per-game play sessions (Games tab)
 
+/** Where the time of a session went. Every second in a session gets one label. */
+export interface PhaseTotals {
+  gameplaySec: number // actually playing
+  menuSec: number // menus, scoreboards with a cursor, AFK, cutscenes (no input)
+  loadingSec: number // loading screens (game not rendering, or reading the disk while waiting)
+  awaySec: number // game not in front (alt-tab)
+  loadings: number // number of loading screens
+  loadingAvgSec: number
+  loadingMaxSec: number
+}
+
 /**
  * Statistics of one play session (or the average of several, see GameRecord.last3).
  * A session lasts while the game runs; time spent out of the game (alt-tab) is excluded.
+ * The top-level numbers cover **gameplay seconds only** (`scope: 'gameplay'`); `all` has the
+ * same numbers over every second in the game (menus and loading screens included).
  * GPU fields are null without NVML (non-NVIDIA). CPU temperature is not measured in v0.1.
  */
 export interface SessionStats {
   id: string // session id, or "avg3" for an average
   game: string // exe name, e.g. "Overwatch.exe"
   sessions: number // 1, or how many sessions were averaged
+  scope: 'gameplay' | 'all'
+  phases: PhaseTotals // same object in the gameplay view and in `all`
+  all: SessionStats | null // the "everything" view (its own `all` is null); null in older records
   startTs: number
   endTs: number
-  durationSec: number // time actually spent in the game
+  durationSec: number // seconds covered by this view: gameplay seconds, or every second in the game for `all`
   fullTracing: boolean // false = limited mode (no DPC/ISR/disk latency)
 
   // frames
@@ -369,6 +411,8 @@ export interface SessionStats {
   ramUsedAvgMb: number
   ramUsedMaxMb: number
   gameRamMaxMb: number // game working set peak
+  cpuTempAvgC: number | null // null without the PawnIO driver
+  cpuTempMaxC: number | null
 
   // GPU (NVIDIA / NVML)
   gpuUtilAvgPct: number | null
@@ -465,6 +509,10 @@ export const KEYS = {
     'ev.game_io', // {mb}
     'ev.not_responding', // {sec}
     'ev.no_external', // {}
+    'ev.mem_top_process', // {process, mb}  one per big RAM user (up to 3), biggest first
+    'ev.cpu_temp', // {c}
+    'ev.heat_process', // {process, pct}  what was loading the CPU
+    'ev.heat_gpu_process', // {process, pct}  what was loading the GPU
   ],
   /** checks that came back clean for an incident */
   ro: [
@@ -476,6 +524,7 @@ export const KEYS = {
     'ro.cpu_throttle', // {}
     'ro.vram', // {pct}
     'ro.processes', // {}
+    'ro.cpu_temp', // {c}  CPU temperature normal
   ],
   /** system health checks (SystemInfo.checks) */
   chk: [
@@ -489,6 +538,7 @@ export const KEYS = {
     'chk.vbs', // {hvci: 'yes'|'no'}
     'chk.timer_resolution', // {currentMs, minMs, maxMs}
     'chk.nvml', // {available: 'yes'|'no'}
+    'chk.cpu_temp', // {reason: 'ok'|'not_installed'|'not_elevated'|'unsupported'|'failed', c?}
   ],
   /** toast titles/bodies */
   toast: [

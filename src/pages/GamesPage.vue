@@ -7,9 +7,12 @@ import GameDetail from '../components/games/GameDetail.vue'
 import { call, on } from '../lib/ipc'
 import { EVENTS, type GameRecord } from '../lib/contract'
 import { t } from '../i18n'
-import { fmtNum, fmtPlaytime, fmtRelative } from '../lib/format'
-import { prettyGameName } from '../lib/games'
+import { fmtNum, fmtPct, fmtPlaytime, fmtRelative } from '../lib/format'
+import { gameplayPct, prettyGameName } from '../lib/games'
 import { now, status, visible } from '../store'
+
+/** Share of recent play time spent actually playing (null for records without phases). */
+const inGamePct = (g: GameRecord) => gameplayPct((g.last3 ?? g.live)?.phases)
 
 /** While a game is live, its record is refreshed this often (driven by status ticks, no timer). */
 const LIVE_REFRESH_MS = 5000
@@ -91,6 +94,7 @@ watch(status, () => {
             <span>{{ fmtPlaytime(g.totalPlaySec) }}</span>
             <span class="when">{{ fmtRelative(g.lastPlayedTs, now) }}</span>
           </div>
+          <div v-if="inGamePct(g) !== null" class="row4 mono">{{ t('games.inGamePct', { pct: fmtPct(inGamePct(g)) }) }}</div>
         </button>
       </div>
     </aside>
@@ -217,6 +221,11 @@ h2 {
 }
 .row3 .when {
   margin-left: auto;
+}
+.row4 {
+  margin-top: -6px;
+  font-size: 10.5px;
+  color: var(--text-3);
 }
 .detail {
   min-width: 0;

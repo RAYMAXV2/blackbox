@@ -1,4 +1,4 @@
-﻿//! Frame presents (DXGI for D3D10/11/12, D3D9) from user-mode providers, filtered in the
+//! Frame presents (DXGI for D3D10/11/12, D3D9) from user-mode providers, filtered in the
 //! provider to the single "Present_Start" event. Only the foreground process's frames are kept.
 
 use super::{read_u32, read_u64, user_data, EventSink, ProviderSpec, SessionSpec};

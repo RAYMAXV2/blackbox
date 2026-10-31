@@ -10,7 +10,8 @@ use std::sync::mpsc;
 use std::sync::{Arc, Mutex, OnceLock};
 use windows_sys::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, RECT, WPARAM};
 use windows_sys::Win32::Graphics::Dwm::{
-    DwmSetWindowAttribute, DWMWA_BORDER_COLOR, DWMWA_USE_IMMERSIVE_DARK_MODE, DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUND,
+    DwmSetWindowAttribute, DWMWA_BORDER_COLOR, DWMWA_USE_IMMERSIVE_DARK_MODE, DWMWA_WINDOW_CORNER_PREFERENCE,
+    DWMWCP_ROUND,
 };
 use windows_sys::Win32::Graphics::Gdi::*;
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
@@ -276,7 +277,13 @@ unsafe fn paint(hwnd: HWND) {
             SetTextColor(mem, BODY);
             let mut br = RECT { left: text_x, top: s(40), right: w - s(14), bottom: h - s(10) };
             let body = wide(&n.body);
-            DrawTextW(mem, body.as_ptr(), -1, &mut br, DT_LEFT | DT_WORDBREAK | DT_END_ELLIPSIS | DT_EDITCONTROL | DT_NOPREFIX);
+            DrawTextW(
+                mem,
+                body.as_ptr(),
+                -1,
+                &mut br,
+                DT_LEFT | DT_WORDBREAK | DT_END_ELLIPSIS | DT_EDITCONTROL | DT_NOPREFIX,
+            );
 
             SelectObject(mem, old_font);
             DeleteObject(f_label as HGDIOBJ);

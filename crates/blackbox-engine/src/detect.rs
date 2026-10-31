@@ -69,8 +69,11 @@ impl Recorder {
             return; // counted in the session stats, not worth an incident
         }
         // The driver spike behind this long frame, if any, is reported by the hitch itself.
-        self.pending
-            .retain(|p| !(p.kind == IncidentKind::Latency && p.marker_us >= h.start_us - 1_000_000 && p.marker_us <= h.end_us + 1_000_000));
+        self.pending.retain(|p| {
+            !(p.kind == IncidentKind::Latency
+                && p.marker_us >= h.start_us - 1_000_000
+                && p.marker_us <= h.end_us + 1_000_000)
+        });
 
         let app = self.game.as_ref().map(|g| (g.pid, g.name.clone()));
         let (tl_from, tl_to) = Self::spike_window(h.end_us);
@@ -89,11 +92,10 @@ impl Recorder {
             ready_at: tl_to + 500_000,
         };
         // Merge with a nearby hitch still waiting for data: keep the worst frame.
-        if let Some(p) = self
-            .pending
-            .iter_mut()
-            .find(|p| matches!(p.kind, IncidentKind::Hitch | IncidentKind::Freeze) && (h.end_us - p.marker_us).abs() < HITCH_SPACING_US)
-        {
+        if let Some(p) = self.pending.iter_mut().find(|p| {
+            matches!(p.kind, IncidentKind::Hitch | IncidentKind::Freeze)
+                && (h.end_us - p.marker_us).abs() < HITCH_SPACING_US
+        }) {
             if pending.magnitude.value > p.magnitude.value {
                 *p = pending;
             }
@@ -111,14 +113,21 @@ impl Recorder {
     pub(crate) fn detect_latency(&mut self, fresh: &[KernelBucket]) {
         let threshold = latency_threshold_us(self.settings.sensitivity);
         for b in fresh {
-            let (us, drv) = if b.dpc_max_us >= b.isr_max_us { (b.dpc_max_us, b.dpc_max_drv) } else { (b.isr_max_us, b.isr_max_drv) };
+            let (us, drv) = if b.dpc_max_us >= b.isr_max_us {
+                (b.dpc_max_us, b.dpc_max_drv)
+            } else {
+                (b.isr_max_us, b.isr_max_drv)
+            };
             if us < threshold {
                 continue;
             }
             let marker = b.start_us() + BUCKET_US / 2;
             // A hitch at the same moment already carries this driver as evidence.
             let near_hitch = self.last_hitch.is_some_and(|(t, _)| (t - marker).abs() < 1_500_000)
-                || self.pending.iter().any(|p| p.kind != IncidentKind::Latency && (p.marker_us - marker).abs() < 1_500_000);
+                || self
+                    .pending
+                    .iter()
+                    .any(|p| p.kind != IncidentKind::Latency && (p.marker_us - marker).abs() < 1_500_000);
             if near_hitch || self.debounced(&format!("lat:{drv}"), marker, LATENCY_DEBOUNCE_US) {
                 continue;
             }
@@ -225,10 +234,9 @@ impl Recorder {
             self.throttle_since = None;
         }
 
-        let (ios, lat_sum) = self
-            .kring
-            .range(now - 11_000_000, now - 1_000_000)
-            .fold((0u64, 0u64), |(n, s), b| (n + b.disk_ios() as u64, s + b.disks.iter().map(|d| d.lat_sum_us).sum::<u64>()));
+        let (ios, lat_sum) = self.kring.range(now - 11_000_000, now - 1_000_000).fold((0u64, 0u64), |(n, s), b| {
+            (n + b.disk_ios() as u64, s + b.disks.iter().map(|d| d.lat_sum_us).sum::<u64>())
+        });
         let disk_lat_ms = if ios >= 50 { lat_sum as f32 / ios as f32 / 1000.0 } else { 0.0 };
         let pressured = self.mem.load_pct >= 95.0 || disk_lat_ms >= 100.0;
         if pressured {
@@ -275,11 +283,12 @@ impl Recorder {
             !go
         });
         for p in ready {
+            let marker = p.marker_us;
             let inc = self.finalize(p);
             self.recent.push_back((now, inc.severity));
             self.incidents_session += 1;
             if let Some(g) = self.game.as_mut().filter(|g| inc.app.as_ref().is_some_and(|a| a.pid == g.pid)) {
-                g.accum.add_incident(inc.causes.first().map(|c| c.id.as_str()));
+                g.play.add_incident(marker, inc.causes.first().map(|c| c.id.as_str()));
             }
             log::info!("incident {} {:?} {:?}", inc.id, inc.kind, inc.causes.first().map(|c| &c.id));
             let summary = inc.summary();
@@ -296,7 +305,8 @@ impl Recorder {
         let kernel = self.kring.window(ctx_from, ctx_to);
         let seconds: Vec<SecondSample> =
             self.seconds.iter().filter(|s| s.t_us > ctx_from && s.start_us() < ctx_to + 1_000_000).cloned().collect();
-        let events: Vec<ProcEvent> = self.events.iter().filter(|e| e.t_us >= ctx_from && e.t_us <= ctx_to).cloned().collect();
+        let events: Vec<ProcEvent> =
+            self.events.iter().filter(|e| e.t_us >= ctx_from && e.t_us <= ctx_to).cloned().collect();
         let drivers = DriverTable {
             entries: self
                 .registry
@@ -341,6 +351,7 @@ impl Recorder {
             verdict: &verdict,
             to_unix_ms: &|us| clock.us_to_unix_ms(us),
         });
+        let context = blackbox_core::analyze::context_at(&seconds, p.marker_us);
         let ts = self.clock.us_to_unix_ms(p.marker_us);
         Incident {
             id: self.next_incident_id(ts),
@@ -353,6 +364,7 @@ impl Recorder {
             ruled_out: verdict.ruled_out,
             read: false,
             timeline: Some(timeline),
+            context,
         }
     }
 

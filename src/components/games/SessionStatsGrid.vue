@@ -2,23 +2,30 @@
 // Every number of a play session (or of an average of sessions), grouped like the
 // Live page reads: frames → stability → GPU → CPU & memory → system latency.
 import { computed } from 'vue'
+import PhaseBar from './PhaseBar.vue'
 import StatTile from './StatTile.vue'
 import type { SessionStats } from '../../lib/contract'
 import { t } from '../../i18n'
 import { fmtMb, fmtMs, fmtNum, fmtPct, fmtUs } from '../../lib/format'
-import { causeLabel, tone, type Tone } from '../../lib/games'
+import { causeLabel, phaseTotal, tone, type Tone } from '../../lib/games'
 
 const props = withDefaults(
   defineProps<{
+    /** Already resolved for the current scope (see `view`). */
     stats: SessionStats
     game: string
     /** When set, values are tinted better/worse against it. */
     reference?: SessionStats | null
     /** A short subset (live session card). */
     compact?: boolean
+    /** Shown above the numbers, e.g. why the "everything" view isn't available. */
+    note?: string
   }>(),
-  { reference: null, compact: false },
+  { reference: null, compact: false, note: '' },
 )
+
+const hasPhases = computed(() => phaseTotal(props.stats.phases) > 0)
+const secs = (v: number) => `${fmtNum(v, v < 10 ? 1 : 0)} s`
 
 const s = computed(() => props.stats)
 const r = computed(() => props.reference)
@@ -37,6 +44,8 @@ const hasGpu = computed(() =>
 </script>
 
 <template>
+  <p v-if="note" class="note top-note">{{ note }}</p>
+  <PhaseBar v-if="hasPhases" :phases="s.phases" class="phase-bar" />
   <div v-if="compact" class="tiles compact">
     <StatTile :label="t('games.m.fpsAvg')" :value="fmtNum(s.fpsAvg)" unit="FPS" />
     <StatTile :label="t('games.m.low1')" :value="fmtNum(s.low1Fps)" unit="FPS" />
@@ -45,6 +54,7 @@ const hasGpu = computed(() =>
     <StatTile v-if="hasGpu" :label="t('games.m.gpuTemp')" :value="deg(s.gpuTempAvgC)" unit="°C" :sub="maxOf(`${deg(s.gpuTempMaxC)} °C`)" />
     <StatTile v-if="hasGpu" :label="t('games.m.gpuUtil')" :value="fmtPct(s.gpuUtilAvgPct)" :sub="maxOf(fmtPct(s.gpuUtilMaxPct))" />
     <StatTile :label="t('games.m.cpu')" :value="fmtPct(s.cpuAvgPct)" :sub="maxOf(fmtPct(s.cpuMaxPct))" />
+    <StatTile v-if="s.cpuTempAvgC !== null" :label="t('games.m.cpuTemp')" :value="fmtNum(s.cpuTempAvgC)" unit="°C" :sub="maxOf(`${deg(s.cpuTempMaxC)} °C`)" />
   </div>
 
   <div v-else class="grid">
@@ -73,6 +83,15 @@ const hasGpu = computed(() =>
         />
         <StatTile :label="t('games.m.freezes')" :value="fmtNum(s.freezes)" :tone="tn('freezes', false, 0.15)" />
         <StatTile :label="t('games.m.incidents')" :value="fmtNum(s.incidents)" />
+        <template v-if="hasPhases">
+          <StatTile :label="t('games.m.loadings')" :value="fmtNum(s.phases.loadings)" />
+          <StatTile
+            :label="t('games.m.loadingAvg')"
+            :value="s.phases.loadings ? secs(s.phases.loadingAvgSec) : '—'"
+            :tone="r && phaseTotal(r.phases) > 0 ? tone(s.phases.loadingAvgSec, r.phases.loadingAvgSec, false, 0.1) : ''"
+          />
+          <StatTile :label="t('games.m.loadingMax')" :value="s.phases.loadings ? secs(s.phases.loadingMaxSec) : '—'" />
+        </template>
       </div>
       <div class="causes">
         <span class="label">{{ t('games.m.causes') }}</span>
@@ -119,8 +138,16 @@ const hasGpu = computed(() =>
         <StatTile :label="t('games.m.freqLimit')" :value="fmtPct(s.cpuFreqLimitMinPct)" :tone="s.cpuFreqLimitMinPct < 95 ? 'worse' : ''" />
         <StatTile :label="t('games.m.ram')" :value="fmtMb(s.ramUsedAvgMb)" :sub="maxOf(fmtMb(s.ramUsedMaxMb))" />
         <StatTile :label="t('games.m.gameRam')" :value="fmtMb(s.gameRamMaxMb)" />
+        <StatTile
+          v-if="s.cpuTempAvgC !== null"
+          :label="t('games.m.cpuTemp')"
+          :value="fmtNum(s.cpuTempAvgC)"
+          unit="°C"
+          :sub="maxOf(`${deg(s.cpuTempMaxC)} °C`)"
+          :tone="tn('cpuTempAvgC', false)"
+        />
       </div>
-      <p class="note">{{ t('games.cpuTempNa') }}</p>
+      <p v-if="s.cpuTempAvgC === null" class="note">{{ t('games.cpuTempNa') }}</p>
     </section>
 
     <section class="group">
@@ -143,6 +170,12 @@ const hasGpu = computed(() =>
   display: flex;
   flex-direction: column;
   gap: 22px;
+}
+.phase-bar {
+  margin-bottom: 18px;
+}
+.top-note {
+  margin: 0 0 12px;
 }
 .g-head {
   display: flex;

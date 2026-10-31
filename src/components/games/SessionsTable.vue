@@ -1,17 +1,19 @@
 <script setup lang="ts">
 // Every stored session, newest first, tinted against the recent average.
 // A row expands into the session's full statistics.
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import SessionStatsGrid from './SessionStatsGrid.vue'
 import Icon from '../Icon.vue'
 import type { SessionStats } from '../../lib/contract'
 import { t } from '../../i18n'
 import { fmtDateShort, fmtMs, fmtNum, fmtPlaytime } from '../../lib/format'
-import { tone } from '../../lib/games'
+import { missingAll, tone, view } from '../../lib/games'
 
+/** `sessions` are raw records; `reference` is already resolved for the current scope. */
 const props = defineProps<{ sessions: SessionStats[]; reference: SessionStats | null; game: string }>()
 
 const open = ref<string | null>(null)
+const rows = computed(() => props.sessions.map((raw) => ({ raw, s: view(raw), missing: missingAll(raw) })))
 
 function toggle(id: string) {
   open.value = open.value === id ? null : id
@@ -36,9 +38,11 @@ const tn = (v: number | null, key: keyof SessionStats, higherIsBetter: boolean, 
       </tr>
     </thead>
     <tbody>
-      <template v-for="s in sessions" :key="s.id">
-        <tr class="row" :class="{ on: open === s.id }" tabindex="0" @click="toggle(s.id)" @keydown.enter="toggle(s.id)">
-          <td class="mono">{{ fmtDateShort(s.startTs) }}</td>
+      <template v-for="{ raw, s, missing } in rows" :key="raw.id">
+        <tr class="row" :class="{ on: open === raw.id }" tabindex="0" @click="toggle(raw.id)" @keydown.enter="toggle(raw.id)">
+          <td class="mono">
+            {{ fmtDateShort(s.startTs) }}<span v-if="missing" class="dim old" :title="t('games.scope.noAll')">*</span>
+          </td>
           <td class="r num">{{ fmtPlaytime(s.durationSec) }}</td>
           <td class="r num" :class="tn(s.fpsAvg, 'fpsAvg', true)">{{ fmtNum(s.fpsAvg) }}</td>
           <td class="r num" :class="tn(s.low1Fps, 'low1Fps', true)">{{ fmtNum(s.low1Fps) }}</td>
@@ -49,9 +53,9 @@ const tn = (v: number | null, key: keyof SessionStats, higherIsBetter: boolean, 
           </td>
           <td class="x"><Icon name="arrow" :size="14" class="chev" /></td>
         </tr>
-        <tr v-if="open === s.id" class="expanded">
+        <tr v-if="open === raw.id" class="expanded">
           <td colspan="8">
-            <SessionStatsGrid :stats="s" :game="game" :reference="reference" />
+            <SessionStatsGrid :stats="s" :game="game" :reference="reference" :note="missing ? t('games.scope.noAll') : ''" />
           </td>
         </tr>
       </template>
@@ -62,6 +66,9 @@ const tn = (v: number | null, key: keyof SessionStats, higherIsBetter: boolean, 
 <style scoped>
 .row {
   cursor: pointer;
+}
+.old {
+  margin-left: 3px;
 }
 .row td {
   transition: background 0.15s var(--ease);

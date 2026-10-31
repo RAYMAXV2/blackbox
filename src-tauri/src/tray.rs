@@ -55,7 +55,9 @@ pub fn update(app: &AppHandle, state: &TrayState) {
     let state = state.clone();
     let handle = app.clone();
     let _ = app.run_on_main_thread(move || {
-        let Some(tray) = handle.tray_by_id(ID) else { return };
+        let Some(tray) = handle.tray_by_id(ID) else {
+            return;
+        };
         let icon = if !state.recording {
             ICON_PAUSED
         } else if state.unread > 0 || state.health == Health::Bad {

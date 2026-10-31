@@ -13,9 +13,9 @@ use windows_sys::Win32::System::Registry::{
 };
 use windows_sys::Win32::System::SystemInformation::GetSystemTimePreciseAsFileTime;
 use windows_sys::Win32::System::Threading::{
-    GetCurrentProcess, GetCurrentThread, OpenProcessToken, SetThreadInformation, SetThreadPriority, ThreadPowerThrottling,
-    THREAD_MODE_BACKGROUND_BEGIN, THREAD_POWER_THROTTLING_CURRENT_VERSION, THREAD_POWER_THROTTLING_EXECUTION_SPEED,
-    THREAD_POWER_THROTTLING_STATE, THREAD_PRIORITY_BELOW_NORMAL,
+    GetCurrentProcess, GetCurrentThread, OpenProcessToken, SetThreadInformation, SetThreadPriority,
+    ThreadPowerThrottling, THREAD_MODE_BACKGROUND_BEGIN, THREAD_POWER_THROTTLING_CURRENT_VERSION,
+    THREAD_POWER_THROTTLING_EXECUTION_SPEED, THREAD_POWER_THROTTLING_STATE, THREAD_PRIORITY_BELOW_NORMAL,
 };
 
 pub type Micros = i64;

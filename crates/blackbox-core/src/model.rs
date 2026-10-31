@@ -117,6 +117,8 @@ pub struct CpuLive {
     pub throttled: bool,
     pub processes: u32,
     pub threads: u32,
+    /// Tctl (AMD) or package (Intel) temperature; None without the PawnIO driver.
+    pub temp_c: Option<f32>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -160,7 +162,10 @@ impl GpuThrottle {
         }
     }
     pub fn is_thermal(self) -> bool {
-        matches!(self, GpuThrottle::SwThermal | GpuThrottle::HwThermal | GpuThrottle::HwSlowdown | GpuThrottle::HwPowerBrake)
+        matches!(
+            self,
+            GpuThrottle::SwThermal | GpuThrottle::HwThermal | GpuThrottle::HwSlowdown | GpuThrottle::HwPowerBrake
+        )
     }
 }
 
@@ -397,13 +402,42 @@ pub struct Incident {
     pub read: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timeline: Option<Timeline>,
+    /// The machine at the moment of the incident (detail only, like the timeline).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context: Option<IncidentContext>,
 }
 
 impl Incident {
-    /// Copy without the (large) timeline, as sent in lists and events.
+    /// Copy without the timeline and context, as sent in lists and events.
     pub fn summary(&self) -> Incident {
-        Incident { timeline: None, ..self.clone() }
+        Incident { timeline: None, context: None, ..self.clone() }
     }
+}
+
+/// What was running when the incident happened.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IncidentContext {
+    pub cpu_temp_c: Option<f32>,
+    pub gpu_temp_c: Option<f32>,
+    pub cpu_pct: f32,
+    pub gpu_pct: Option<f32>,
+    pub mem_available_mb: u32,
+    pub mem_load_pct: f32,
+    /// Biggest users of CPU, RAM, disk and GPU at that second (up to 12), by CPU first.
+    pub processes: Vec<ProcContext>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProcContext {
+    pub pid: u32,
+    pub name: String,
+    pub tag: Option<ProcTag>,
+    pub cpu_pct: f32,
+    pub ram_mb: f32,
+    pub io_bps: f64,
+    pub gpu_pct: Option<f32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -459,6 +493,10 @@ pub struct Timeline {
     pub hard_faults: Vec<u32>,
     pub cpu_pct: Vec<TimePoint>,
     pub gpu_pct: Vec<TimePoint>,
+    #[serde(default)]
+    pub cpu_temp_c: Vec<TimePoint>,
+    #[serde(default)]
+    pub gpu_temp_c: Vec<TimePoint>,
     pub events: Vec<TimelineEvent>,
 }
 
@@ -630,13 +668,33 @@ pub struct CauseCount {
     pub count: u32,
 }
 
+/// Where the time of a session went (see `activity::PhaseClassifier`).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct PhaseTotals {
+    pub gameplay_sec: u32,
+    pub menu_sec: u32,
+    pub loading_sec: u32,
+    pub away_sec: u32,
+    /// Loading screens (runs of loading seconds).
+    pub loadings: u32,
+    pub loading_avg_sec: f32,
+    pub loading_max_sec: u32,
+}
+
 /// One play session, or the average of several (`sessions > 1`). See contract.ts.
+/// The top level covers gameplay only; `all` covers every second in the game (menus and
+/// loading screens included).
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct SessionStats {
     pub id: String,
     pub game: String,
     pub sessions: u32,
+    /// "gameplay" or "all".
+    pub scope: String,
+    pub phases: PhaseTotals,
+    pub all: Option<Box<SessionStats>>,
     pub start_ts: i64,
     pub end_ts: i64,
     pub duration_sec: u64,
@@ -669,6 +727,8 @@ pub struct SessionStats {
     pub ram_used_avg_mb: f32,
     pub ram_used_max_mb: f32,
     pub game_ram_max_mb: f32,
+    pub cpu_temp_avg_c: Option<f32>,
+    pub cpu_temp_max_c: Option<f32>,
 
     pub gpu_util_avg_pct: Option<f32>,
     pub gpu_util_max_pct: Option<f32>,

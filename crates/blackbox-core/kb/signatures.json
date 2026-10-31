@@ -138,8 +138,8 @@
     "consequences": ["stutter", "freeze", "slow_app"],
     "title": { "en": "Not enough free memory: Windows paged to disk", "fr": "Pas assez de mémoire libre : Windows a utilisé le fichier d'échange" },
     "explain": {
-      "en": "{count} hard page faults just before the hitch: data had to come back from the page file on disk. Only {mb} MB of RAM was available.",
-      "fr": "{count} défauts de page durs juste avant la saccade : des données ont dû être relues depuis le fichier d'échange. Il ne restait que {mb} Mo de RAM disponible."
+      "en": "{count} hard page faults just before the hitch: data had to come back from the page file on disk. Only {mb} MB of RAM was available: the apps holding the most memory at that moment are listed below.",
+      "fr": "{count} défauts de page durs juste avant la saccade : des données ont dû être relues depuis le fichier d'échange. Il ne restait que {mb} Mo de RAM disponible : les applis qui occupaient le plus de mémoire à ce moment sont listées ci-dessous."
     },
     "fixes": [
       { "en": "Close memory-hungry background apps (browsers, launchers, chat apps).", "fr": "Ferme les applis gourmandes en mémoire en arrière-plan (navigateurs, launchers, messageries)." },
@@ -306,8 +306,8 @@
     "consequences": ["fps_drop", "stutter"],
     "title": { "en": "Your CPU was slowed down", "fr": "Ton processeur a été ralenti" },
     "explain": {
-      "en": "Windows reported the processor frequency capped at {pct}% of its maximum: a thermal or power limit kicked in.",
-      "fr": "Windows a signalé une fréquence processeur limitée à {pct} % de son maximum : une limite thermique ou de puissance s'est déclenchée."
+      "en": "Windows reported the processor frequency capped at {pct}% of its maximum: a thermal or power limit kicked in. The CPU temperature and what was loading the CPU are listed below when available.",
+      "fr": "Windows a signalé une fréquence processeur limitée à {pct} % de son maximum : une limite thermique ou de puissance s'est déclenchée. La température du CPU et ce qui le faisait travailler sont listés ci-dessous quand ils sont disponibles."
     },
     "fixes": [
       { "en": "Check CPU temperatures and the cooler mounting / thermal paste.", "fr": "Vérifie les températures du CPU et le montage du ventirad / la pâte thermique." },

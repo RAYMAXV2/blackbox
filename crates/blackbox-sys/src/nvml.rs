@@ -35,7 +35,22 @@ struct Api {
     memory: unsafe extern "C" fn(Device, *mut Memory) -> Ret,
     fan: Option<unsafe extern "C" fn(Device, *mut u32) -> Ret>,
     throttle: Option<unsafe extern "C" fn(Device, *mut u64) -> Ret>,
+    proc_util: Option<unsafe extern "C" fn(Device, *mut ProcUtil, *mut u32, u64) -> Ret>,
 }
+
+/// nvmlProcessUtilizationSample_t
+#[repr(C)]
+#[derive(Default, Clone, Copy)]
+struct ProcUtil {
+    pid: u32,
+    timestamp: u64,
+    sm_util: u32,
+    mem_util: u32,
+    enc_util: u32,
+    dec_util: u32,
+}
+
+const NVML_ERROR_INSUFFICIENT_SIZE: Ret = 7;
 
 pub struct Nvml {
     lib: HMODULE,
@@ -120,6 +135,7 @@ impl Nvml {
             fan: sym(lib, "nvmlDeviceGetFanSpeed"),
             throttle: sym(lib, "nvmlDeviceGetCurrentClocksEventReasons")
                 .or_else(|| sym(lib, "nvmlDeviceGetCurrentClocksThrottleReasons")),
+            proc_util: sym(lib, "nvmlDeviceGetProcessUtilization"),
         };
         let mut device: Device = std::ptr::null_mut();
         if by_index(0, &mut device) != 0 || device.is_null() {
@@ -181,6 +197,38 @@ impl Nvml {
     }
 }
 
+impl Nvml {
+    /// GPU usage per process (%, 3D/compute engine) over the last couple of seconds, highest
+    /// first. Empty when the driver doesn't report it.
+    pub fn process_utilization(&self) -> Vec<(u32, f32)> {
+        let Some(f) = self.api.proc_util else { return Vec::new() };
+        let since = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_micros() as u64)
+            .saturating_sub(3_000_000);
+        let mut count = 0u32;
+        let rc = unsafe { f(self.device, std::ptr::null_mut(), &mut count, since) };
+        if rc != NVML_ERROR_INSUFFICIENT_SIZE || count == 0 {
+            return Vec::new();
+        }
+        let mut buf = vec![ProcUtil::default(); count as usize + 8];
+        count = buf.len() as u32;
+        if unsafe { f(self.device, buf.as_mut_ptr(), &mut count, since) } != 0 {
+            return Vec::new();
+        }
+        // Several samples per process: keep the highest.
+        let mut out: Vec<(u32, f32)> = Vec::new();
+        for s in &buf[..(count as usize).min(buf.len())] {
+            match out.iter_mut().find(|(p, _)| *p == s.pid) {
+                Some((_, u)) => *u = u.max(s.sm_util as f32),
+                None => out.push((s.pid, s.sm_util as f32)),
+            }
+        }
+        out.sort_by(|a, b| b.1.total_cmp(&a.1));
+        out
+    }
+}
+
 impl Drop for Nvml {
     fn drop(&mut self) {
         unsafe {
@@ -200,6 +248,9 @@ mod tests {
             let r = n.read();
             assert!(!n.name.is_empty());
             assert!(r.vram_total_mb > 0);
+            let per_process = n.process_utilization();
+            println!("per-process GPU: {per_process:?}");
+            assert!(per_process.iter().all(|(_, u)| (0.0..=100.0).contains(u)));
         }
     }
 }

@@ -1,7 +1,9 @@
 //! Whole-system snapshots with one syscall each: every process (CPU, I/O, memory, hard faults)
 //! and every logical processor (busy, kernel, DPC and interrupt time).
 
-use crate::nt::{query_system_information, AlignedBuf, SYSTEM_PROCESSOR_PERFORMANCE_INFORMATION, SYSTEM_PROCESS_INFORMATION};
+use crate::nt::{
+    query_system_information, AlignedBuf, SYSTEM_PROCESSOR_PERFORMANCE_INFORMATION, SYSTEM_PROCESS_INFORMATION,
+};
 use std::collections::HashMap;
 use std::sync::Arc;
 

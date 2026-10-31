@@ -1,4 +1,4 @@
-﻿//! Static machine description and configuration checks (read once, refreshed rarely).
+//! Static machine description and configuration checks (read once, refreshed rarely).
 
 use crate::nt;
 use crate::util::{reg_dword, reg_string, Hive};
@@ -101,7 +101,8 @@ pub fn hvci_enabled() -> bool {
 
 /// Timer resolution in milliseconds: (current, finest, coarsest).
 pub fn timer_resolution_ms() -> Option<(f32, f32, f32)> {
-    nt::timer_resolution().map(|(coarse, fine, cur)| (cur as f32 / 10_000.0, fine as f32 / 10_000.0, coarse as f32 / 10_000.0))
+    nt::timer_resolution()
+        .map(|(coarse, fine, cur)| (cur as f32 / 10_000.0, fine as f32 / 10_000.0, coarse as f32 / 10_000.0))
 }
 
 #[cfg(test)]

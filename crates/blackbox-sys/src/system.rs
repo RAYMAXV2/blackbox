@@ -10,7 +10,9 @@ use windows_sys::Win32::System::Power::{
     CallNtPowerInformation, GetSystemPowerStatus, PowerGetActiveScheme, PowerReadFriendlyName, ProcessorInformation,
     PROCESSOR_POWER_INFORMATION, SYSTEM_POWER_STATUS,
 };
-use windows_sys::Win32::System::ProcessStatus::{K32GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS, PROCESS_MEMORY_COUNTERS_EX};
+use windows_sys::Win32::System::ProcessStatus::{
+    K32GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS, PROCESS_MEMORY_COUNTERS_EX,
+};
 use windows_sys::Win32::System::SystemInformation::{GlobalMemoryStatusEx, MEMORYSTATUSEX};
 use windows_sys::Win32::System::Threading::{GetCurrentProcess, GetProcessTimes};
 
@@ -176,7 +178,8 @@ pub fn self_usage() -> SelfUsage {
         }
         let mut pmc: PROCESS_MEMORY_COUNTERS_EX = std::mem::zeroed();
         pmc.cb = std::mem::size_of::<PROCESS_MEMORY_COUNTERS_EX>() as u32;
-        if K32GetProcessMemoryInfo(GetCurrentProcess(), &mut pmc as *mut _ as *mut PROCESS_MEMORY_COUNTERS, pmc.cb) != 0 {
+        if K32GetProcessMemoryInfo(GetCurrentProcess(), &mut pmc as *mut _ as *mut PROCESS_MEMORY_COUNTERS, pmc.cb) != 0
+        {
             out.working_set = pmc.WorkingSetSize as u64;
             out.private_bytes = pmc.PrivateUsage as u64;
         }

@@ -186,7 +186,11 @@ pub fn analyze(inp: &AnalysisInput) -> Verdict {
             } else {
                 let ratio = (us as f32 / 1000.0) / inp.excess_ms.max(1.0);
                 let base = (0.25 + 0.7 * ratio.min(1.0)).clamp(0.25, 0.92);
-                if us >= 1000 { base } else { base * 0.6 }
+                if us >= 1000 {
+                    base
+                } else {
+                    base * 0.6
+                }
             };
             let ev_key = if is_isr { "ev.isr_spike" } else { "ev.dpc_spike" };
             c.add(
@@ -283,17 +287,24 @@ pub fn analyze(inp: &AnalysisInput) -> Verdict {
         } else {
             (secs.iter().map(|s| s.hard_faults).max().unwrap_or(0) as f32, 0.0, 300.0)
         };
-        if hard >= threshold && (avail_pct < 15.0 || hard >= 10.0 * base_hard.max(10.0)) {
-            let conf = 0.45 + 0.4 * ramp(hard, threshold, 2000.0) + if avail_pct < 10.0 { 0.1 } else { 0.0 };
-            c.add(
-                "mem.paging",
-                conf,
-                params! {"count" => r0(hard), "mb" => avail_mb},
-                vec![
-                    Reason::new("ev.hard_faults", params! {"count" => r0(hard)}),
-                    Reason::new("ev.mem_available", params! {"mb" => avail_mb, "pct" => r0(avail_pct)}),
-                ],
-            );
+        let paging = hard >= threshold && (avail_pct < 15.0 || hard >= 10.0 * base_hard.max(10.0));
+        let starved = inp.kind == IncidentKind::Pressure && avail_pct < 8.0;
+        if paging || starved {
+            let conf = if paging {
+                0.45 + 0.4 * ramp(hard, threshold, 2000.0) + if avail_pct < 10.0 { 0.1 } else { 0.0 }
+            } else {
+                0.6
+            };
+            let mut ev = Vec::new();
+            if paging {
+                ev.push(Reason::new("ev.hard_faults", params! {"count" => r0(hard)}));
+            }
+            ev.push(Reason::new("ev.mem_available", params! {"mb" => avail_mb, "pct" => r0(avail_pct)}));
+            // Who was holding the memory.
+            for p in top_by(&secs, 3, |s| &s.top_mem, |p| p.ram_mb) {
+                ev.push(Reason::new("ev.mem_top_process", params! {"process" => &*p.name, "mb" => r0(p.ram_mb)}));
+            }
+            c.add("mem.paging", conf, params! {"count" => r0(hard), "mb" => avail_mb}, ev);
         } else {
             ruled.push(Reason::new("ro.memory", params! {"mb" => avail_mb}));
         }
@@ -306,7 +317,8 @@ pub fn analyze(inp: &AnalysisInput) -> Verdict {
         .map(|p| p.pid)
         .collect();
     for ev in inp.events.iter().filter(|e| e.start && e.t_us >= inp.marker_us - 6_000_000 && e.t_us <= inp.focus_to) {
-        if Some(ev.pid) == game_pid || ev.name.eq_ignore_ascii_case("conhost.exe") || ev.tag == Some(ProcTag::Blackbox) {
+        if Some(ev.pid) == game_pid || ev.name.eq_ignore_ascii_case("conhost.exe") || ev.tag == Some(ProcTag::Blackbox)
+        {
             continue;
         }
         let dt_s = ((inp.marker_us - ev.t_us).max(0) as f32) / 1e6;
@@ -376,17 +388,25 @@ pub fn analyze(inp: &AnalysisInput) -> Verdict {
 
     // ── G. CPU frequency limit
     let limit = secs.iter().map(|s| s.freq_limit_pct).fold(f32::INFINITY, f32::min);
+    let cpu_temp =
+        secs.iter().filter_map(|s| s.cpu_temp_c).fold(None, |a: Option<f32>, t| Some(a.map_or(t, |a| a.max(t))));
     if limit.is_finite() && limit > 0.0 {
         if limit < 95.0 {
-            c.add(
-                "cpu.throttled",
-                0.3 + 0.5 * ramp(95.0 - limit, 0.0, 40.0),
-                params! {"pct" => r0(limit)},
-                vec![Reason::new("ev.cpu_freq_limit", params! {"pct" => r0(limit)})],
-            );
+            let mut ev = vec![Reason::new("ev.cpu_freq_limit", params! {"pct" => r0(limit)})];
+            if let Some(t) = cpu_temp {
+                ev.push(Reason::new("ev.cpu_temp", params! {"c" => r0(t)}));
+            }
+            // What was making the CPU work (and heat) at that moment.
+            for p in top_by(&secs, 2, |s| &s.top_cpu, |p| p.cpu_pct).into_iter().filter(|p| p.cpu_pct >= 3.0) {
+                ev.push(Reason::new("ev.heat_process", params! {"process" => &*p.name, "pct" => r0(p.cpu_pct)}));
+            }
+            c.add("cpu.throttled", 0.3 + 0.5 * ramp(95.0 - limit, 0.0, 40.0), params! {"pct" => r0(limit)}, ev);
         } else {
             ruled.push(Reason::bare("ro.cpu_throttle"));
         }
+    }
+    if let Some(t) = cpu_temp.filter(|t| *t < 90.0) {
+        ruled.push(Reason::new("ro.cpu_temp", params! {"c" => r0(t)}));
     }
 
     // ── H. GPU
@@ -396,23 +416,32 @@ pub fn analyze(inp: &AnalysisInput) -> Verdict {
         let power = gpus.iter().any(|g| g.throttle.contains(&GpuThrottle::SwPowerCap));
         let temp = gpus.iter().filter_map(|g| g.temp_c).fold(0.0, f32::max);
         let util = gpus.iter().map(|g| g.util_pct).fold(0.0, f32::max);
+        let gpu_heat: Vec<Reason> = top_by(&secs, 2, |s| &s.top_gpu, |p| p.gpu_pct.unwrap_or(0.0))
+            .into_iter()
+            .filter(|p| p.gpu_pct.unwrap_or(0.0) >= 5.0)
+            .map(|p| {
+                Reason::new(
+                    "ev.heat_gpu_process",
+                    params! {"process" => &*p.name, "pct" => r0(p.gpu_pct.unwrap_or(0.0))},
+                )
+            })
+            .collect();
         if let Some(t) = thermal {
-            c.add(
-                "gpu.thermal",
-                0.55,
-                params! {"c" => r0(temp), "reason" => t.id()},
-                vec![
-                    Reason::new("ev.gpu_throttle", params! {"reason" => t.id()}),
-                    Reason::new("ev.gpu_temp", params! {"c" => r0(temp)}),
-                ],
-            );
+            let mut ev = vec![
+                Reason::new("ev.gpu_throttle", params! {"reason" => t.id()}),
+                Reason::new("ev.gpu_temp", params! {"c" => r0(temp)}),
+            ];
+            ev.extend(gpu_heat.iter().cloned());
+            c.add("gpu.thermal", 0.55, params! {"c" => r0(temp), "reason" => t.id()}, ev);
         }
         if power {
             c.add(
                 "gpu.power_limit",
                 if util >= 97.0 { 0.3 } else { 0.2 },
                 params! {"reason" => "sw_power_cap"},
-                vec![Reason::new("ev.gpu_throttle", params! {"reason" => "sw_power_cap"})],
+                std::iter::once(Reason::new("ev.gpu_throttle", params! {"reason" => "sw_power_cap"}))
+                    .chain(gpu_heat.iter().cloned())
+                    .collect(),
             );
         }
         if thermal.is_none() && !power {
@@ -463,6 +492,75 @@ pub fn analyze(inp: &AnalysisInput) -> Verdict {
     Verdict { causes: c.finish(), ruled_out }
 }
 
+/// The `n` biggest users of a resource over the window, one entry per process (its peak),
+/// leaving out OS pseudo-processes and Blackbox itself.
+fn top_by<'a>(
+    secs: &[&'a SecondSample],
+    n: usize,
+    list: impl Fn(&'a SecondSample) -> &'a Vec<ProcUse>,
+    value: impl Fn(&ProcUse) -> f32,
+) -> Vec<&'a ProcUse> {
+    let mut best: Vec<&'a ProcUse> = Vec::new();
+    for p in secs.iter().flat_map(|s| list(s).iter()) {
+        if kb::is_system_pseudo_process(&p.name) || p.tag == Some(ProcTag::Blackbox) {
+            continue;
+        }
+        match best.iter_mut().find(|b| b.pid == p.pid) {
+            Some(b) if value(p) > value(b) => *b = p,
+            Some(_) => {}
+            None => best.push(p),
+        }
+    }
+    best.sort_by(|a, b| value(b).total_cmp(&value(a)));
+    best.truncate(n);
+    best
+}
+
+/// What was running at the second of `marker_us` (the closest sample if none covers it).
+pub fn context_at(seconds: &[SecondSample], marker_us: Micros) -> Option<IncidentContext> {
+    let s = seconds
+        .iter()
+        .find(|s| s.start_us() < marker_us && s.t_us >= marker_us)
+        .or_else(|| seconds.iter().min_by_key(|s| (s.t_us - marker_us).abs()))?;
+    let mut procs: Vec<ProcContext> = Vec::new();
+    for p in s.top_cpu.iter().chain(&s.top_mem).chain(&s.top_io).chain(&s.top_gpu) {
+        if p.pid == 0 {
+            continue;
+        }
+        match procs.iter_mut().find(|c| c.pid == p.pid) {
+            Some(c) => {
+                c.cpu_pct = c.cpu_pct.max(r1(p.cpu_pct) as f32);
+                c.ram_mb = c.ram_mb.max(p.ram_mb.round());
+                c.io_bps = c.io_bps.max(p.io_bps.round());
+                c.gpu_pct = match (c.gpu_pct, p.gpu_pct) {
+                    (Some(a), Some(b)) => Some(a.max(b)),
+                    (a, b) => a.or(b),
+                };
+            }
+            None => procs.push(ProcContext {
+                pid: p.pid,
+                name: p.name.to_string(),
+                tag: p.tag,
+                cpu_pct: r1(p.cpu_pct) as f32,
+                ram_mb: p.ram_mb.round(),
+                io_bps: p.io_bps.round(),
+                gpu_pct: p.gpu_pct,
+            }),
+        }
+    }
+    procs.sort_by(|a, b| b.cpu_pct.total_cmp(&a.cpu_pct).then_with(|| b.ram_mb.total_cmp(&a.ram_mb)));
+    procs.truncate(12);
+    Some(IncidentContext {
+        cpu_temp_c: s.cpu_temp_c.map(|t| t.round()),
+        gpu_temp_c: s.gpu.as_ref().and_then(|g| g.temp_c),
+        cpu_pct: r0(s.cpu_total) as f32,
+        gpu_pct: s.gpu.as_ref().map(|g| g.util_pct),
+        mem_available_mb: s.mem_avail_mb,
+        mem_load_pct: s.mem_load,
+        processes: procs,
+    })
+}
+
 pub struct TimelineInput<'a> {
     pub t0_us: Micros,
     pub t1_us: Micros,
@@ -506,13 +604,21 @@ pub fn build_timeline(inp: TimelineInput) -> Timeline {
         hard_faults: inp.kernel.iter().map(|b| b.hard_faults).collect(),
         cpu_pct: Vec::new(),
         gpu_pct: Vec::new(),
+        cpu_temp_c: Vec::new(),
+        gpu_temp_c: Vec::new(),
         events: Vec::new(),
     };
     for s in inp.seconds.iter().filter(|s| s.t_us > inp.t0_us && s.start_us() < inp.t1_us) {
         let t = off(s.t_us.min(inp.t1_us));
         tl.cpu_pct.push(TimePoint { t, v: s.cpu_total.round() });
+        if let Some(c) = s.cpu_temp_c {
+            tl.cpu_temp_c.push(TimePoint { t, v: c.round() });
+        }
         if let Some(g) = &s.gpu {
             tl.gpu_pct.push(TimePoint { t, v: g.util_pct.round() });
+            if let Some(c) = g.temp_c {
+                tl.gpu_temp_c.push(TimePoint { t, v: c.round() });
+            }
         }
     }
     for e in inp.events.iter().filter(|e| e.t_us >= inp.t0_us && e.t_us < inp.t1_us) {
@@ -525,7 +631,8 @@ pub fn build_timeline(inp: TimelineInput) -> Timeline {
     }
     // The worst driver spike in the window gets its own marker.
     if let Some(b) = inp.kernel.iter().max_by_key(|b| b.dpc_max_us.max(b.isr_max_us)) {
-        let (us, drv) = if b.dpc_max_us >= b.isr_max_us { (b.dpc_max_us, b.dpc_max_drv) } else { (b.isr_max_us, b.isr_max_drv) };
+        let (us, drv) =
+            if b.dpc_max_us >= b.isr_max_us { (b.dpc_max_us, b.dpc_max_drv) } else { (b.isr_max_us, b.isr_max_drv) };
         if us >= 500 {
             let name = inp.drivers.driver(drv).map(|(n, _)| n.to_owned()).unwrap_or_else(|| "unknown".into());
             tl.events.push(TimelineEvent {
@@ -547,10 +654,7 @@ mod tests {
 
     fn table() -> DriverTable {
         DriverTable {
-            entries: vec![
-                ("ndis.sys".into(), DriverCategory::Network),
-                ("nvlddmkm.sys".into(), DriverCategory::Gpu),
-            ],
+            entries: vec![("ndis.sys".into(), DriverCategory::Network), ("nvlddmkm.sys".into(), DriverCategory::Gpu)],
         }
     }
 
@@ -580,6 +684,8 @@ mod tests {
                 cpu_pct: 30.0,
                 io_bps: 1e6,
                 hard_faults: 0,
+                ram_mb: 0.0,
+                gpu_pct: None,
             }],
             ..Default::default()
         }
@@ -615,7 +721,16 @@ mod tests {
         let v = analyze(&input(&k, &s, &[], &d));
         assert_eq!(v.causes[0].id, "game.internal");
         let keys: Vec<_> = v.ruled_out.iter().map(|r| r.key.as_str()).collect();
-        for k in ["ro.dpc", "ro.disk", "ro.memory", "ro.processes", "ro.cpu", "ro.cpu_throttle", "ro.gpu_throttle", "ro.vram"] {
+        for k in [
+            "ro.dpc",
+            "ro.disk",
+            "ro.memory",
+            "ro.processes",
+            "ro.cpu",
+            "ro.cpu_throttle",
+            "ro.gpu_throttle",
+            "ro.vram",
+        ] {
             assert!(keys.contains(&k), "missing {k} in {keys:?}");
         }
     }
@@ -635,6 +750,8 @@ mod tests {
                 cpu_pct: 6.0,
                 io_bps: 210e6,
                 hard_faults: 0,
+                ram_mb: 0.0,
+                gpu_pct: None,
             });
         }
         let ev = vec![ProcEvent {
@@ -679,6 +796,110 @@ mod tests {
         i.duration_s = 7.0;
         let v = analyze(&i);
         assert_eq!(v.causes[0].id, "app.not_responding");
+    }
+
+    fn proc_use(pid: u32, name: &str, cpu: f32, ram: f32, gpu: Option<f32>) -> ProcUse {
+        ProcUse {
+            pid,
+            name: Arc::from(name),
+            tag: None,
+            cpu_pct: cpu,
+            io_bps: 0.0,
+            hard_faults: 0,
+            ram_mb: ram,
+            gpu_pct: gpu,
+        }
+    }
+
+    #[test]
+    fn low_memory_names_the_apps_holding_ram() {
+        let k = quiet_kernel(5, 35);
+        let mut s: Vec<_> = (25..33).map(|t| second(t, 40.0)).collect();
+        for x in &mut s {
+            x.mem_avail_mb = 900; // of 32 GB
+            x.top_mem = vec![
+                proc_use(10, "chrome.exe", 2.0, 9800.0, None),
+                proc_use(11, "Game.exe", 30.0, 14000.0, None),
+                proc_use(4, "System", 1.0, 20000.0, None),
+                proc_use(12, "Discord.exe", 1.0, 1200.0, None),
+            ];
+        }
+        let d = table();
+        let mut i = input(&k, &s, &[], &d);
+        i.kind = IncidentKind::Pressure;
+        let v = analyze(&i);
+        let mem = v.causes.iter().find(|c| c.id == "mem.paging").expect("memory cause");
+        let named: Vec<_> = mem
+            .evidence
+            .iter()
+            .filter(|e| e.key == "ev.mem_top_process")
+            .map(|e| e.params.get("process").cloned())
+            .collect();
+        assert_eq!(
+            named,
+            vec![
+                Some(ParamValue::Text("Game.exe".into())),
+                Some(ParamValue::Text("chrome.exe".into())),
+                Some(ParamValue::Text("Discord.exe".into()))
+            ],
+            "biggest first, pseudo-processes left out"
+        );
+    }
+
+    #[test]
+    fn throttling_reports_temperature_and_heat_sources() {
+        let k = quiet_kernel(5, 35);
+        let mut s: Vec<_> = (25..33).map(|t| second(t, 60.0)).collect();
+        for x in &mut s {
+            x.freq_limit_pct = 70.0;
+            x.cpu_temp_c = Some(95.0);
+            x.top_cpu = vec![proc_use(20, "Blender.exe", 45.0, 3000.0, None)];
+            x.top_gpu = vec![proc_use(21, "Game.exe", 10.0, 0.0, Some(97.0))];
+            if let Some(g) = x.gpu.as_mut() {
+                g.throttle = vec![GpuThrottle::HwThermal];
+                g.temp_c = Some(88.0);
+            }
+        }
+        let d = table();
+        let mut i = input(&k, &s, &[], &d);
+        i.kind = IncidentKind::Throttle;
+        let v = analyze(&i);
+        let cpu = v.causes.iter().find(|c| c.id == "cpu.throttled").unwrap();
+        let keys: Vec<_> = cpu.evidence.iter().map(|e| e.key.as_str()).collect();
+        assert!(keys.contains(&"ev.cpu_temp") && keys.contains(&"ev.heat_process"), "{keys:?}");
+        let gpu = v.causes.iter().find(|c| c.id == "gpu.thermal").unwrap();
+        assert!(gpu.evidence.iter().any(|e| e.key == "ev.heat_gpu_process"));
+        assert!(!v.ruled_out.iter().any(|r| r.key == "ro.cpu_temp"), "95 °C is not normal");
+    }
+
+    #[test]
+    fn context_serializes_with_the_names_the_ui_expects() {
+        let mut s = second(30, 50.0);
+        s.cpu_temp_c = Some(71.0);
+        s.top_mem = vec![proc_use(3, "c.exe", 0.5, 8000.0, None)];
+        let json = serde_json::to_value(context_at(&[s], 29_500_000).unwrap()).unwrap();
+        for key in ["cpuTempC", "gpuTempC", "cpuPct", "gpuPct", "memAvailableMb", "memLoadPct"] {
+            assert!(json.get(key).is_some(), "{key}");
+        }
+        let p = &json["processes"][0];
+        for key in ["pid", "name", "tag", "cpuPct", "ramMb", "ioBps", "gpuPct"] {
+            assert!(p.get(key).is_some(), "{key}");
+        }
+    }
+
+    #[test]
+    fn context_lists_what_was_running() {
+        let mut s = second(30, 50.0);
+        s.cpu_temp_c = Some(71.4);
+        s.top_cpu = vec![proc_use(1, "a.exe", 20.0, 100.0, None), proc_use(2, "b.exe", 5.0, 50.0, None)];
+        s.top_mem = vec![proc_use(3, "c.exe", 0.5, 8000.0, None), proc_use(1, "a.exe", 20.0, 300.0, None)];
+        s.top_gpu = vec![proc_use(2, "b.exe", 5.0, 50.0, Some(80.0))];
+        let ctx = context_at(&[second(29, 10.0), s], 29_500_000).unwrap();
+        assert_eq!(ctx.cpu_temp_c, Some(71.0));
+        let names: Vec<_> = ctx.processes.iter().map(|p| p.name.as_str()).collect();
+        assert_eq!(names, vec!["a.exe", "b.exe", "c.exe"]);
+        assert_eq!(ctx.processes[0].ram_mb, 300.0, "peak of both lists");
+        assert_eq!(ctx.processes[1].gpu_pct, Some(80.0));
     }
 
     #[test]

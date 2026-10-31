@@ -4,7 +4,7 @@
 //! percentiles and 1 % / 0.1 % lows over hours of play) and running sums / extremes of the
 //! once-per-second machine readings. Nothing grows with the session length.
 
-use crate::model::{CauseCount, IncidentKind, SessionStats, Severity};
+use crate::model::{CauseCount, IncidentKind, PhaseTotals, SessionStats, Severity};
 use crate::series::{GpuSample, Micros};
 
 const FINE_BINS: usize = 500; // 0 – 50 ms by 0.1 ms
@@ -58,7 +58,11 @@ impl FrameHist {
     }
 
     pub fn mean_ms(&self) -> f32 {
-        if self.count == 0 { 0.0 } else { (self.sum_ms / self.count as f64) as f32 }
+        if self.count == 0 {
+            0.0
+        } else {
+            (self.sum_ms / self.count as f64) as f32
+        }
     }
 
     /// Frame time at percentile `p` (0..1).
@@ -102,13 +106,14 @@ impl FrameHist {
 
 /// What the engine knows about the machine and the game over the last second.
 #[derive(Debug, Clone, Default)]
-pub struct TickSample<'a> {
+pub struct TickSample {
     pub cpu_pct: f32,
     pub game_cpu_pct: f32,
     pub game_ram_mb: f32,
     pub freq_limit_pct: f32,
     pub ram_used_mb: f32,
-    pub gpu: Option<&'a GpuSample>,
+    pub gpu: Option<GpuSample>,
+    pub cpu_temp_c: Option<f32>,
     pub dpc_max_us: u32,
     pub isr_max_us: u32,
     pub disk_lat_max_ms: f32,
@@ -153,6 +158,7 @@ pub struct SessionAccum {
     freq_min: f32,
     ram: Stat,
     game_ram_max: f32,
+    cpu_temp: Stat,
     gpu_util: Stat,
     gpu_temp: Stat,
     gpu_power: Stat,
@@ -165,6 +171,7 @@ pub struct SessionAccum {
     isr_max: u32,
     disk_lat_max: f32,
     fullscreen_s: u32,
+    hist: FrameHist,
 }
 
 impl SessionAccum {
@@ -186,6 +193,7 @@ impl SessionAccum {
             freq_min: 100.0,
             ram: Stat::default(),
             game_ram_max: 0.0,
+            cpu_temp: Stat::default(),
             gpu_util: Stat::default(),
             gpu_temp: Stat::default(),
             gpu_power: Stat::default(),
@@ -198,6 +206,7 @@ impl SessionAccum {
             isr_max: 0,
             disk_lat_max: 0.0,
             fullscreen_s: 0,
+            hist: FrameHist::default(),
         }
     }
 
@@ -208,6 +217,10 @@ impl SessionAccum {
 
     pub fn active_sec(&self) -> u64 {
         (self.active_us / 1_000_000) as u64
+    }
+
+    pub fn add_frame(&mut self, ms: f32) {
+        self.hist.add(ms);
     }
 
     pub fn add_second(&mut self, s: &TickSample) {
@@ -221,7 +234,10 @@ impl SessionAccum {
         self.freq_min = self.freq_min.min(s.freq_limit_pct);
         self.ram.add(s.ram_used_mb);
         self.game_ram_max = self.game_ram_max.max(s.game_ram_mb);
-        if let Some(g) = s.gpu {
+        if let Some(t) = s.cpu_temp_c {
+            self.cpu_temp.add(t);
+        }
+        if let Some(g) = &s.gpu {
             self.gpu_seconds += 1;
             self.gpu_util.add(g.util_pct);
             if let Some(t) = g.temp_c {
@@ -271,14 +287,19 @@ impl SessionAccum {
         }
     }
 
-    /// Statistics so far (`end_ts` = now for a live session).
-    pub fn stats(&self, id: &str, end_ts: i64, frames: &FrameHist) -> SessionStats {
+    /// Statistics so far (`end_ts` = now for a live session). `scope`: "gameplay" or "all".
+    pub fn stats(&self, id: &str, end_ts: i64, scope: &str) -> SessionStats {
+        let frames = &self.hist;
         let hours = (self.active_us as f64 / 3.6e9).max(1.0 / 3600.0);
         let hitches: u32 = self.hitches.iter().sum();
         let frame_ms = frames.mean_ms();
         let low = |frac: f32| {
             let ms = frames.worst_mean_ms(frac);
-            if ms > 0.0 { 1000.0 / ms } else { 0.0 }
+            if ms > 0.0 {
+                1000.0 / ms
+            } else {
+                0.0
+            }
         };
         let mut causes = self.causes.clone();
         causes.sort_by(|a, b| b.count.cmp(&a.count).then_with(|| a.id.cmp(&b.id)));
@@ -290,6 +311,9 @@ impl SessionAccum {
             id: id.to_owned(),
             game: self.game.clone(),
             sessions: 1,
+            scope: scope.to_owned(),
+            phases: PhaseTotals::default(),
+            all: None,
             start_ts: self.start_ts,
             end_ts,
             duration_sec: self.active_sec(),
@@ -319,6 +343,8 @@ impl SessionAccum {
             ram_used_avg_mb: self.ram.avg().unwrap_or(0.0),
             ram_used_max_mb: self.ram.max,
             game_ram_max_mb: self.game_ram_max,
+            cpu_temp_avg_c: self.cpu_temp.avg(),
+            cpu_temp_max_c: (self.cpu_temp.n > 0).then_some(self.cpu_temp.max),
             gpu_util_avg_pct: opt(&self.gpu_util),
             gpu_util_max_pct: opt_max(&self.gpu_util),
             gpu_temp_avg_c: opt(&self.gpu_temp),
@@ -366,13 +392,20 @@ impl SessionStats {
         ] {
             *v = r1(*v);
         }
-        for v in [&mut self.frame_time_avg_ms, &mut self.frame_time_p50_ms, &mut self.frame_time_p95_ms, &mut self.frame_time_p99_ms] {
+        for v in [
+            &mut self.frame_time_avg_ms,
+            &mut self.frame_time_p50_ms,
+            &mut self.frame_time_p95_ms,
+            &mut self.frame_time_p99_ms,
+        ] {
             *v = r2(*v);
         }
         self.ram_used_avg_mb = self.ram_used_avg_mb.round();
         self.ram_used_max_mb = self.ram_used_max_mb.round();
         self.game_ram_max_mb = self.game_ram_max_mb.round();
         for v in [
+            &mut self.cpu_temp_avg_c,
+            &mut self.cpu_temp_max_c,
             &mut self.gpu_util_avg_pct,
             &mut self.gpu_util_max_pct,
             &mut self.gpu_temp_avg_c,
@@ -413,9 +446,12 @@ pub fn average(sessions: &[SessionStats]) -> Option<SessionStats> {
         }
         (w > 0.0).then(|| (sum / w) as f32)
     };
-    let max_opt = |f: &dyn Fn(&SessionStats) -> Option<f32>| sessions.iter().filter_map(f).fold(None, |a: Option<f32>, v| Some(a.map_or(v, |a| a.max(v))));
+    let max_opt = |f: &dyn Fn(&SessionStats) -> Option<f32>| {
+        sessions.iter().filter_map(f).fold(None, |a: Option<f32>, v| Some(a.map_or(v, |a| a.max(v))))
+    };
     let maxf = |f: &dyn Fn(&SessionStats) -> f32| sessions.iter().map(f).fold(0.0, f32::max);
-    let minf = |f: &dyn Fn(&SessionStats) -> f32| sessions.iter().map(f).filter(|v| *v > 0.0).fold(f32::INFINITY, f32::min);
+    let minf =
+        |f: &dyn Fn(&SessionStats) -> f32| sessions.iter().map(f).filter(|v| *v > 0.0).fold(f32::INFINITY, f32::min);
     let sum = |f: &dyn Fn(&SessionStats) -> u32| sessions.iter().map(f).sum::<u32>();
 
     let duration: u64 = sessions.iter().map(|s| s.duration_sec).sum();
@@ -431,11 +467,30 @@ pub fn average(sessions: &[SessionStats]) -> Option<SessionStats> {
     causes.truncate(5);
     let fps_min = minf(&|s| s.fps_min1s);
 
+    let mut phases = PhaseTotals::default();
+    for p in sessions.iter().map(|s| &s.phases) {
+        phases.gameplay_sec += p.gameplay_sec;
+        phases.menu_sec += p.menu_sec;
+        phases.loading_sec += p.loading_sec;
+        phases.away_sec += p.away_sec;
+        phases.loadings += p.loadings;
+        phases.loading_max_sec = phases.loading_max_sec.max(p.loading_max_sec);
+    }
+    if phases.loadings > 0 {
+        phases.loading_avg_sec = ((phases.loading_sec as f32 / phases.loadings as f32) * 10.0).round() / 10.0;
+    }
+    // "Everything" view of the average: average of the sessions' own "everything" views.
+    let alls: Vec<SessionStats> = sessions.iter().filter_map(|s| s.all.as_deref().cloned()).collect();
+    let all = if alls.len() == sessions.len() { average(&alls).map(Box::new) } else { None };
+
     Some(
         SessionStats {
             id: format!("avg{}", sessions.len()),
             game: first.game.clone(),
             sessions: sessions.len() as u32,
+            scope: first.scope.clone(),
+            phases,
+            all,
             start_ts: sessions.iter().map(|s| s.start_ts).min().unwrap_or(0),
             end_ts: sessions.iter().map(|s| s.end_ts).max().unwrap_or(0),
             duration_sec: duration,
@@ -465,6 +520,8 @@ pub fn average(sessions: &[SessionStats]) -> Option<SessionStats> {
             ram_used_avg_mb: wavg(&|s| s.ram_used_avg_mb),
             ram_used_max_mb: maxf(&|s| s.ram_used_max_mb),
             game_ram_max_mb: maxf(&|s| s.game_ram_max_mb),
+            cpu_temp_avg_c: wavg_opt(&|s| s.cpu_temp_avg_c),
+            cpu_temp_max_c: max_opt(&|s| s.cpu_temp_max_c),
             gpu_util_avg_pct: wavg_opt(&|s| s.gpu_util_avg_pct),
             gpu_util_max_pct: max_opt(&|s| s.gpu_util_max_pct),
             gpu_temp_avg_c: wavg_opt(&|s| s.gpu_temp_avg_c),
@@ -533,7 +590,7 @@ mod tests {
                 game_ram_mb: 4000.0 + i as f32,
                 freq_limit_pct: if i == 50 { 85.0 } else { 100.0 },
                 ram_used_mb: 16000.0,
-                gpu: Some(if i % 2 == 0 { &g1 } else { &g2 }),
+                gpu: Some(if i % 2 == 0 { g1.clone() } else { g2.clone() }),
                 dpc_max_us: 120,
                 fps: Some(if i == 10 { 90.0 } else { 240.0 }),
                 fullscreen: true,
@@ -545,11 +602,11 @@ mod tests {
         a.add_incident(Some("game.internal"));
         a.add_incident(Some("game.internal"));
         a.add_incident(Some("drv.gpu"));
-        let mut h = FrameHist::default();
         for _ in 0..1000 {
-            h.add(4.17);
+            a.add_frame(4.17);
         }
-        let s = a.stats("s1", 200_000, &h);
+        let s = a.stats("s1", 200_000, "gameplay");
+        assert_eq!(s.scope, "gameplay");
         assert_eq!(s.duration_sec, 120);
         assert!((s.fps_avg - 240.0).abs() < 2.0);
         assert_eq!((s.fps_min1s, s.fps_max1s), (90.0, 240.0));
@@ -567,7 +624,7 @@ mod tests {
     fn no_gpu_means_null_gpu_fields() {
         let mut a = SessionAccum::new("Game.exe", 0, false);
         a.add_second(&TickSample { cpu_pct: 10.0, ..Default::default() });
-        let s = a.stats("s", 1, &FrameHist::default());
+        let s = a.stats("s", 1, "all");
         assert_eq!((s.gpu_util_avg_pct, s.gpu_temp_max_c, s.gpu_throttle_pct), (None, None, None));
         assert_eq!(s.fps_avg, 0.0);
     }

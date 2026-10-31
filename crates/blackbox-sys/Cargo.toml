@@ -1,4 +1,4 @@
-﻿[package]
+[package]
 name = "blackbox-sys"
 description = "Windows collectors for Blackbox: ETW sessions, kernel snapshots, power, GPU (NVML)"
 version.workspace = true
@@ -31,6 +31,8 @@ features = [
     "Win32_Networking_WinSock",
     "Win32_Graphics_Gdi",
     "Win32_UI_Accessibility",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_Input_XboxController",
     "Win32_UI_WindowsAndMessaging",
 ]
 

@@ -1,4 +1,4 @@
-﻿//! Public engine handle: thread lifecycle, commands and queries.
+//! Public engine handle: thread lifecycle, commands and queries.
 
 use crate::recorder::{ProcNow, Recorder};
 use crate::store::{self, GameStore, Store};

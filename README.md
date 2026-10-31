@@ -18,6 +18,14 @@ it. In English and French.
 - **Per-game history**: every play session is saved per game (FPS, 1 % and 0.1 % lows,
   frame-time percentiles, hitches per hour, GPU load/temperature/power/clocks/VRAM, CPU and RAM,
   driver and disk latency, top causes), with the average of the last 3 sessions and the trend.
+- **What was running at that moment**: every incident keeps the CPU and GPU temperatures, memory
+  load and the processes using the most CPU, RAM, disk and GPU at that second. Memory problems
+  name the apps holding the RAM; throttling names what was heating the CPU or GPU.
+- **CPU temperature** through the free [PawnIO](https://pawnio.eu) driver when it is installed
+  (FanControl and LibreHardwareMonitor install it), on AMD Zen 1–5 and Intel.
+- **In-game vs menus**: each second of a play session is labelled gameplay, menu, loading or
+  away (cursor, input activity, rendering and disk signals), so game stats reflect real play;
+  loading screens are counted and timed.
 - **Incidents, explained**: stutters, freezes, driver latency spikes (audio crackle, input lag),
   apps not responding, sustained throttling, memory/disk pressure. Each incident has a verdict
   with a confidence, the evidence, the checks that came back clean, the fixes, and a synced
@@ -133,14 +141,14 @@ that the three stay in sync.
 - GPU telemetry is NVIDIA-only (NVML); AMD/Intel GPUs show no GPU card yet.
 - Frame times come from DXGI (D3D10/11/12) and D3D9 presents. Vulkan and OpenGL games are only
   measured when the driver presents them through DXGI.
-- No CPU temperature (needs a kernel driver); CPU throttling is read from Windows' frequency limit.
+- CPU temperature needs the PawnIO driver and admin rights; without them it is simply absent.
 - If Blackbox is killed, its two ETW sessions keep running until the next start (which cleans
   them up) or a reboot.
 - Tested on one machine so far (Windows 11 25H2, Ryzen 7 9800X3D, RTX 5090).
 
 ## Roadmap
 
-- AMD and Intel GPU telemetry (D3DKMT / ADLX), CPU temperatures (PawnIO driver)
+- AMD and Intel GPU telemetry (D3DKMT / ADLX)
 - Vulkan/OpenGL frame times via DxgKrnl present history
 - "Deep mode" on demand: context switches and stacks for a few seconds around an incident
 - Shareable incident reports, community signatures, comparisons between similar PCs
@@ -148,7 +156,8 @@ that the three stay in sync.
 
 ## License
 
-[MIT](LICENSE).
+[MIT](LICENSE). The two PawnIO modules in `crates/blackbox-sys/pawnio/` are third-party, under
+the LGPL 2.1 or later: see [their notice](crates/blackbox-sys/pawnio/README.md).
 
 ## En français
 

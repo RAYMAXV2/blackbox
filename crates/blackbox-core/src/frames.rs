@@ -1,4 +1,4 @@
-﻿//! Frame pacing for the foreground app and hitch detection.
+//! Frame pacing for the foreground app and hitch detection.
 //!
 //! Works on present timestamps only. The "typical" frame time is a rolling median of the last
 //! 64 normal frames, so a hitch is judged against what the game normally does, not a fixed FPS.
@@ -10,7 +10,6 @@
 
 use crate::model::{FramePoint, IncidentKind, Sensitivity, Severity};
 use crate::series::Micros;
-use crate::session::FrameHist;
 use std::collections::VecDeque;
 
 /// Frames kept for statistics and incident timelines (~30 s at 240 fps).
@@ -131,8 +130,6 @@ pub struct FrameTracker {
     normal_after: u32,
     steady: u32,
     scratch: Vec<f32>,
-    /// Every frame of the session, for percentiles and lows over hours of play.
-    pub hist: FrameHist,
 }
 
 impl FrameTracker {
@@ -155,7 +152,6 @@ impl FrameTracker {
             normal_after: 0,
             steady: 0,
             scratch: Vec::with_capacity(FRAME_RING),
-            hist: FrameHist::default(),
         }
     }
 
@@ -188,7 +184,6 @@ impl FrameTracker {
             return None;
         }
         self.frames_seen += 1;
-        self.hist.add(ms);
         if self.frames.len() == FRAME_RING {
             self.frames.pop_front();
         }
@@ -314,6 +309,16 @@ impl FrameTracker {
             .collect()
     }
 
+    /// Frame times of the presents in `(from, to]`, newest first, without allocating.
+    pub fn intervals(&self, from: Micros, to: Micros) -> impl Iterator<Item = f32> + '_ {
+        self.frames
+            .iter()
+            .rev()
+            .skip_while(move |(t, _)| *t > to)
+            .take_while(move |(t, _)| *t > from)
+            .map(|&(_, ms)| ms)
+    }
+
     pub fn last_present_us(&self) -> Option<Micros> {
         self.last_us
     }
@@ -425,7 +430,7 @@ mod tests {
         let mut tr = FrameTracker::new(1, 0);
         let mut t = 0;
         feed(&mut tr, &mut t, 600, 10.0, &rule()); // 100 fps
-        // ETW delivered these frames ~1.8 s late: the FPS must still read 100.
+                                                   // ETW delivered these frames ~1.8 s late: the FPS must still read 100.
         let s = tr.stats(t + 1_800_000);
         assert!((s.fps - 100.0).abs() < 1.0, "{}", s.fps);
         // Nothing for 4 s: the game isn't rendering.

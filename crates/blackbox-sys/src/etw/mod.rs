@@ -1,4 +1,4 @@
-﻿//! Minimal real-time ETW session + consumer.
+//! Minimal real-time ETW session + consumer.
 //!
 //! Design goals: no TDH schema lookups on hot paths (payloads of the few events we use are
 //! parsed at fixed offsets), event-id filtering in the kernel for user providers, raw QPC
@@ -17,10 +17,11 @@ use std::thread::JoinHandle;
 use windows_sys::core::GUID;
 use windows_sys::Win32::System::Diagnostics::Etw::{
     CloseTrace, ControlTraceW, EnableTraceEx2, OpenTraceW, ProcessTrace, StartTraceW, CONTROLTRACE_HANDLE,
-    ENABLE_TRACE_PARAMETERS, ENABLE_TRACE_PARAMETERS_VERSION_2, EVENT_CONTROL_CODE_ENABLE_PROVIDER, EVENT_FILTER_DESCRIPTOR,
-    EVENT_FILTER_TYPE_EVENT_ID, EVENT_RECORD, EVENT_TRACE_CONTROL_QUERY, EVENT_TRACE_CONTROL_STOP, EVENT_TRACE_LOGFILEW,
-    EVENT_TRACE_PROPERTIES, EVENT_TRACE_REAL_TIME_MODE, EVENT_TRACE_SYSTEM_LOGGER_MODE, PROCESSTRACE_HANDLE,
-    PROCESS_TRACE_MODE_EVENT_RECORD, PROCESS_TRACE_MODE_RAW_TIMESTAMP, PROCESS_TRACE_MODE_REAL_TIME, WNODE_FLAG_TRACED_GUID,
+    ENABLE_TRACE_PARAMETERS, ENABLE_TRACE_PARAMETERS_VERSION_2, EVENT_CONTROL_CODE_ENABLE_PROVIDER,
+    EVENT_FILTER_DESCRIPTOR, EVENT_FILTER_TYPE_EVENT_ID, EVENT_RECORD, EVENT_TRACE_CONTROL_QUERY,
+    EVENT_TRACE_CONTROL_STOP, EVENT_TRACE_LOGFILEW, EVENT_TRACE_PROPERTIES, EVENT_TRACE_REAL_TIME_MODE,
+    EVENT_TRACE_SYSTEM_LOGGER_MODE, PROCESSTRACE_HANDLE, PROCESS_TRACE_MODE_EVENT_RECORD,
+    PROCESS_TRACE_MODE_RAW_TIMESTAMP, PROCESS_TRACE_MODE_REAL_TIME, WNODE_FLAG_TRACED_GUID,
 };
 
 pub const ERROR_ALREADY_EXISTS: u32 = 183;
@@ -260,7 +261,10 @@ impl Session {
             return SessionStats::default();
         }
         unsafe {
-            SessionStats { events_lost: (*p).EventsLost as u64, buffers_lost: ((*p).RealTimeBuffersLost + (*p).LogBuffersLost) as u64 }
+            SessionStats {
+                events_lost: (*p).EventsLost as u64,
+                buffers_lost: ((*p).RealTimeBuffersLost + (*p).LogBuffersLost) as u64,
+            }
         }
     }
 
@@ -268,7 +272,12 @@ impl Session {
         if let Some(t) = self.thread.take() {
             let mut buf = props_buffer();
             unsafe {
-                ControlTraceW(self.control, self.name.as_ptr(), buf.as_mut_ptr() as *mut EVENT_TRACE_PROPERTIES, EVENT_TRACE_CONTROL_STOP);
+                ControlTraceW(
+                    self.control,
+                    self.name.as_ptr(),
+                    buf.as_mut_ptr() as *mut EVENT_TRACE_PROPERTIES,
+                    EVENT_TRACE_CONTROL_STOP,
+                );
                 CloseTrace(self.trace);
             }
             let _ = t.join();

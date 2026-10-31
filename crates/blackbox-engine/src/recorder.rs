@@ -1,6 +1,7 @@
-﻿//! The recorder: owns the collectors and every in-memory series. Runs on the engine thread.
+//! The recorder: owns the collectors and every in-memory series. Runs on the engine thread.
 
 use crate::engine::{Cmd, EngineConfig, EngineSink, Notification, OverlayText, Shared, TrayState};
+use crate::play::{PendingSecond, PlaySession};
 use crate::store::{self, GameStore, Store};
 use crate::sysinfo;
 use blackbox_core::frames::{steady_presenter, FrameTracker, HitchRule, GAME_SPAN_US};
@@ -9,12 +10,14 @@ use blackbox_core::kb::{self, Kb};
 use blackbox_core::model::*;
 use blackbox_core::params;
 use blackbox_core::series::*;
-use blackbox_core::session::{SessionAccum, TickSample};
+use blackbox_core::session::TickSample;
+use blackbox_sys::cputemp::{CpuTemp, Unavailable as CpuTempUnavailable};
 use blackbox_sys::drivers::DriverRegistry;
 use blackbox_sys::etw::kernel::{self as kernel_etw, DriverStat, KernelData, KernelSink, RawProcEvent};
 use blackbox_sys::etw::present::{self as present_etw, PresentData, PresentEvent, PresentSink};
 use blackbox_sys::etw::Session;
 use blackbox_sys::foreground::{is_window_hung, Foreground};
+use blackbox_sys::input::{InputProbe, InputSample};
 use blackbox_sys::nvml::{GpuReading, Nvml};
 use blackbox_sys::snapshot::{CoreTimes, ProcRaw, Snapshotter};
 use blackbox_sys::system::{self, CpuFreq, MemoryInfo, SelfUsage};
@@ -69,7 +72,7 @@ impl ProcNow {
         }
     }
 
-    pub fn to_use(&self) -> ProcUse {
+    pub fn to_use(&self, gpu_pct: Option<f32>) -> ProcUse {
         ProcUse {
             pid: self.pid,
             name: self.name.clone(),
@@ -77,6 +80,8 @@ impl ProcNow {
             cpu_pct: self.cpu_pct,
             io_bps: self.io_bps,
             hard_faults: self.hard_faults,
+            ram_mb: self.working_set_mb,
+            gpu_pct,
         }
     }
 }
@@ -91,7 +96,7 @@ pub(crate) struct GameSession {
     pub away_since: Option<Micros>,
     pub fullscreen: bool,
     pub held: Vec<Incident>,
-    pub accum: SessionAccum,
+    pub play: PlaySession,
 }
 
 /// An incident waiting for the data around it (ETW buffers arrive up to ~1 s late).
@@ -165,6 +170,11 @@ pub(crate) struct Recorder {
     last_gpu_us: Micros,
     pub gpu: Option<GpuSample>,
     pub gpu_name: Option<String>,
+    /// GPU usage per process (NVML), highest first.
+    gpu_procs: Vec<(u32, f32)>,
+    cpu_temp: Option<CpuTemp>,
+    pub cpu_temp_err: Option<CpuTempUnavailable>,
+    pub cpu_temp_c: Option<f32>,
     net_prev: Option<(u64, u64)>,
     pub net_rate: (f64, f64),
     self_hist: VecDeque<(Micros, i64)>,
@@ -201,6 +211,7 @@ pub(crate) struct Recorder {
     next_id: u32,
     pub store: Arc<Mutex<Store>>,
     pub games: Arc<Mutex<GameStore>>,
+    input: InputProbe,
 
     // bookkeeping
     last_tick_us: Micros,
@@ -277,6 +288,10 @@ impl Recorder {
             last_gpu_us: i64::MIN / 2,
             gpu: None,
             gpu_name,
+            gpu_procs: Vec::new(),
+            cpu_temp: None,
+            cpu_temp_err: None,
+            cpu_temp_c: None,
             net_prev: None,
             net_rate: (0.0, 0.0),
             self_hist: VecDeque::with_capacity(SELF_WINDOW + 1),
@@ -308,6 +323,7 @@ impl Recorder {
             next_id: 0,
             store,
             games,
+            input: InputProbe::new(),
             last_tick_us: now,
             events_prev_total: 0,
             events_rate: 0,
@@ -339,6 +355,10 @@ impl Recorder {
         }
     }
 
+    pub fn has_cpu_temp(&self) -> bool {
+        self.cpu_temp.is_some()
+    }
+
     pub fn system_info(&self) -> SystemInfo {
         sysinfo::build(self)
     }
@@ -363,6 +383,21 @@ impl Recorder {
     pub fn start_tracing(&mut self) {
         if self.settings.paused || self.kernel.is_some() {
             return;
+        }
+        // Opened first so that, unelevated, the System page can say why there's no temperature.
+        if self.cpu_temp.is_none() {
+            match CpuTemp::open(&self.cpu_name, self.elevated) {
+                Ok(mut t) => {
+                    self.cpu_temp_c = t.read();
+                    self.cpu_temp = Some(t);
+                    self.cpu_temp_err = None;
+                    log::info!("CPU temperature: PawnIO");
+                }
+                Err(e) => {
+                    self.cpu_temp_err = Some(e);
+                    log::info!("no CPU temperature: {e:?}");
+                }
+            }
         }
         if !self.elevated {
             self.kernel_err = Some(blackbox_sys::etw::ERROR_ACCESS_DENIED);
@@ -415,7 +450,8 @@ impl Recorder {
 
     /// Sessions can be stopped from outside (another tool, `logman stop`): notice and restart.
     fn check_sessions(&mut self, now: Micros) {
-        let dead = self.kernel.as_ref().is_some_and(|s| !s.is_alive()) || self.frames.as_ref().is_some_and(|s| !s.is_alive());
+        let dead =
+            self.kernel.as_ref().is_some_and(|s| !s.is_alive()) || self.frames.as_ref().is_some_and(|s| !s.is_alive());
         if dead && now - self.last_restart_us > 60_000_000 {
             self.last_restart_us = now;
             log::warn!("an ETW session ended unexpectedly, restarting tracing");
@@ -502,10 +538,12 @@ impl Recorder {
         self.collect_processes(now, dt);
         self.collect_cores();
         self.mem = system::memory();
+        self.cpu_temp_c = self.cpu_temp.as_mut().and_then(CpuTemp::read).map(|t| (t * 10.0).round() / 10.0);
         self.freq_limit = self.freq.limit_pct(self.ncpu).unwrap_or(100.0);
         // NVML wakes the GPU driver: full rate only while it matters.
         if self.game.is_some() || ui_active || now - self.last_gpu_us >= GPU_IDLE_POLL_US {
             self.gpu = self.nvml.as_ref().map(|n| gpu_sample(n.read()));
+            self.gpu_procs = self.nvml.as_ref().map(|n| n.process_utilization()).unwrap_or_default();
             self.last_gpu_us = now;
         }
         if ui_active {
@@ -523,7 +561,7 @@ impl Recorder {
         let hitches = self.drain_frames(now, sink);
         for h in hitches {
             if let Some(g) = self.game.as_mut() {
-                g.accum.add_hitch(h.kind, h.severity);
+                g.play.push_hitch(h);
             }
             self.on_hitch(h);
         }
@@ -534,7 +572,7 @@ impl Recorder {
 
         let sample = self.second_sample(now);
         self.seconds.push(sample);
-        self.accumulate_session(now, dt);
+        self.sample_session(now);
 
         self.detect_hang(now);
         self.detect_sustained(now);
@@ -597,7 +635,10 @@ impl Recorder {
                 ),
                 None => (0.0, 0.0, 0, kb::process_tag(&p.name)),
             };
-            self.prev_next.insert(key, ProcPrev { cpu_100ns: p.cpu_100ns, io_bytes: p.io_bytes, hard_faults: p.hard_faults, tag });
+            self.prev_next.insert(
+                key,
+                ProcPrev { cpu_100ns: p.cpu_100ns, io_bytes: p.io_bytes, hard_faults: p.hard_faults, tag },
+            );
             if p.pid == 0 {
                 continue;
             }
@@ -679,7 +720,8 @@ impl Recorder {
     }
 
     fn collect_etw_stats(&mut self, now: Micros, dt: f32) {
-        let total: u64 = self.kernel.as_ref().map_or(0, Session::events) + self.frames.as_ref().map_or(0, Session::events);
+        let total: u64 =
+            self.kernel.as_ref().map_or(0, Session::events) + self.frames.as_ref().map_or(0, Session::events);
         self.events_rate = (total.saturating_sub(self.events_prev_total) as f32 / dt).round() as u32;
         self.events_prev_total = total;
         if now - self.last_stats_us >= 5_000_000 {
@@ -775,7 +817,9 @@ impl Recorder {
             if now - ev.t_us > 15_000_000 {
                 break;
             }
-            let Some((full, _)) = self.names.get(&ev.pid) else { continue };
+            let Some((full, _)) = self.names.get(&ev.pid) else {
+                continue;
+            };
             let truncated = ev.name.starts_with("pid ")
                 || (!ev.name.to_ascii_lowercase().ends_with(".exe") && full.len() > ev.name.len());
             if truncated && **full != *ev.name && (ev.name.starts_with("pid ") || full.starts_with(&*ev.name)) {
@@ -839,7 +883,8 @@ impl Recorder {
                 if steady_presenter(&self.candidate_frames) {
                     let name = self.names.get(&fg_pid).map(|(n, _)| n.clone()).unwrap_or_else(|| Arc::from("game"));
                     log::info!("game session: {name} (pid {fg_pid})");
-                    let accum = SessionAccum::new(&name, self.clock.now_unix_ms(), self.mode() == Mode::Full);
+                    let hint = self.games.lock().unwrap_or_else(|p| p.into_inner()).cursor_hint(&name);
+                    let play = PlaySession::new(&name, self.clock.now_unix_ms(), self.mode() == Mode::Full, hint);
                     self.game = Some(GameSession {
                         pid: fg_pid,
                         hwnd: self.fg.hwnd() as isize,
@@ -849,7 +894,7 @@ impl Recorder {
                         away_since: None,
                         fullscreen: false,
                         held: Vec::new(),
-                        accum,
+                        play,
                     });
                     self.candidate_frames.clear();
                 }
@@ -893,9 +938,8 @@ impl Recorder {
 
     /// Statistics of the session in progress, if it is worth keeping.
     fn session_stats(&self, g: &GameSession) -> Option<SessionStats> {
-        (g.accum.active_sec() >= MIN_SESSION_SEC).then(|| {
-            g.accum.stats(&format!("{:x}", g.accum.start_ts), self.clock.now_unix_ms(), &g.tracker.hist)
-        })
+        (g.play.played_sec() >= MIN_SESSION_SEC)
+            .then(|| g.play.stats(&format!("{:x}", g.play.start_ts()), self.clock.now_unix_ms()))
     }
 
     /// Ends the game session: saves its statistics and, in smart mode, sums up what was held.
@@ -905,9 +949,14 @@ impl Recorder {
             return;
         };
         self.frame_hold.clear();
-        log::info!("game session ended: {} ({} hitches, {} s played)", g.name, g.tracker.hitches, g.accum.active_sec());
+        log::info!(
+            "game session ended: {} ({} hitches, {} s in the game)",
+            g.name,
+            g.tracker.hitches,
+            g.play.played_sec()
+        );
         if let Some(stats) = self.session_stats(&g) {
-            let record = self.games.lock().unwrap_or_else(|p| p.into_inner()).add(stats);
+            let record = self.games.lock().unwrap_or_else(|p| p.into_inner()).add(stats, g.play.cursor_game());
             if let Some(sink) = sink {
                 sink.session(&record);
             }
@@ -937,16 +986,17 @@ impl Recorder {
         });
     }
 
-    /// One second of the game session: only while the player is in the game.
-    fn accumulate_session(&mut self, now: Micros, dt: f32) {
+    /// Samples this second of the game session (labelled later, once its frames are in).
+    fn sample_session(&mut self, now: Micros) {
         let Some(g) = self.game.as_ref() else { return };
-        let in_game = g.away_since.is_none() || is_window_hung(g.hwnd);
-        if !in_game {
-            return;
-        }
-        let pid = g.pid;
-        let (game_cpu, game_ram) =
-            self.procs.iter().find(|p| p.pid == pid).map_or((0.0, 0.0), |p| (p.cpu_pct, p.working_set_mb));
+        let focused = g.away_since.is_none() || is_window_hung(g.hwnd);
+        let (pid, hwnd) = (g.pid, g.hwnd);
+        let input = if focused { self.input.sample(hwnd) } else { InputSample::default() };
+        let (game_cpu, game_ram, game_io) = self
+            .procs
+            .iter()
+            .find(|p| p.pid == pid)
+            .map_or((0.0, 0.0, 0.0), |p| (p.cpu_pct, p.working_set_mb, (p.io_bps / 1e6) as f32));
         let horizon = self.kring.last_idx().map_or(now, |i| (i + 1) * BUCKET_US);
         let (mut dpc, mut isr, mut disk) = (0u32, 0u32, 0u32);
         for b in self.kring.range(horizon - 1_000_000, horizon) {
@@ -954,25 +1004,23 @@ impl Recorder {
             isr = isr.max(b.isr_max_us);
             disk = disk.max(b.disk_lat_max_us());
         }
-        let gpu = self.gpu.clone();
-        let ram_used = self.mem.total_mb.saturating_sub(self.mem.avail_mb) as f32;
-        let (cpu, freq_limit) = (self.cpu_total, self.freq_limit);
-        let Some(g) = self.game.as_mut() else { return };
-        let fps = g.tracker.stats(now).fps;
-        g.accum.add_active((dt as f64 * 1e6) as Micros);
-        g.accum.add_second(&TickSample {
-            cpu_pct: cpu,
+        let tick = TickSample {
+            cpu_pct: self.cpu_total,
             game_cpu_pct: game_cpu,
             game_ram_mb: game_ram,
-            freq_limit_pct: freq_limit,
-            ram_used_mb: ram_used,
-            gpu: gpu.as_ref(),
+            freq_limit_pct: self.freq_limit,
+            ram_used_mb: self.mem.total_mb.saturating_sub(self.mem.avail_mb) as f32,
+            gpu: self.gpu.clone(),
             dpc_max_us: dpc,
             isr_max_us: isr,
             disk_lat_max_ms: disk as f32 / 1000.0,
             fullscreen: g.fullscreen,
-            fps: (fps > 0.0).then_some(fps),
-        });
+            cpu_temp_c: self.cpu_temp_c,
+            fps: None,
+        };
+        let Some(g) = self.game.as_mut() else { return };
+        g.play.push_second(PendingSecond { t: now, focused, input, game_io_mbps: game_io, tick });
+        g.play.classify(now, &g.tracker);
     }
 
     fn second_sample(&self, now: Micros) -> SecondSample {
@@ -980,6 +1028,18 @@ impl Recorder {
         by_cpu.sort_unstable_by(|a, b| b.cpu_pct.total_cmp(&a.cpu_pct));
         let mut by_io: Vec<&ProcNow> = self.procs.iter().filter(|p| p.io_bps >= 1e5).collect();
         by_io.sort_unstable_by(|a, b| b.io_bps.total_cmp(&a.io_bps));
+        let mut by_mem: Vec<&ProcNow> = self.procs.iter().filter(|p| p.working_set_mb >= 50.0).collect();
+        by_mem.sort_unstable_by(|a, b| b.working_set_mb.total_cmp(&a.working_set_mb));
+        let gpu_of = |pid: u32| self.gpu_procs.iter().find(|(p, _)| *p == pid).map(|&(_, u)| u);
+        let use_of = |p: &&ProcNow| p.to_use(gpu_of(p.pid));
+        let top_gpu: Vec<ProcUse> = self
+            .gpu_procs
+            .iter()
+            .filter(|(_, u)| *u >= 1.0)
+            .take(4)
+            .filter_map(|&(pid, _)| self.procs.iter().find(|p| p.pid == pid))
+            .map(|p| p.to_use(gpu_of(p.pid)))
+            .collect();
         let hard_faults = if self.kernel.is_some() {
             self.kring.range(now - 2_000_000, now - 1_000_000).map(|b| b.hard_faults).sum()
         } else {
@@ -999,8 +1059,11 @@ impl Recorder {
             hard_faults,
             freq_limit_pct: self.freq_limit,
             gpu: self.gpu.clone(),
-            top_cpu: by_cpu.iter().take(6).map(|p| p.to_use()).collect(),
-            top_io: by_io.iter().take(6).map(|p| p.to_use()).collect(),
+            top_cpu: by_cpu.iter().take(6).map(use_of).collect(),
+            top_io: by_io.iter().take(6).map(use_of).collect(),
+            top_mem: by_mem.iter().take(6).map(use_of).collect(),
+            top_gpu,
+            cpu_temp_c: self.cpu_temp_c,
             fg_pid: self.fg.pid(),
         }
     }
